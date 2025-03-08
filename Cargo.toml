@@ -1,0 +1,9 @@
+[package]
+name = "localshare"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.97"
+crossterm = "0.28.1"
+ctrlc = "3.4.5"
