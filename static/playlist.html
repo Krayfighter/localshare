@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+</head>
+<script>
+
+function Array_remove(array, index) {
+  if (index >= array.length) { return undefined; }
+  let item = array[index];
+  array.splice(index, 1);
+  return item;
+}
+
+
+let playlist_songs = [ %playlist_songs% ];
+// cloning in JS sucks
+let playlist_songs_fresh = playlist_songs.map((x) => x);
+let playlist_songs_listened_to = [];
+
+function load_song_entries() {
+  let song_entries = document.getElementById("song_entries");
+  let list_string = String();
+  playlist_songs.forEach((song_name) => {
+    list_string += "<li>" + song_name + "</li>"
+  });
+  song_entries.innerHTML = list_string;
+}
+
+function load_procedural_content() {
+  load_song_entries();
+}
+
+function replace_audio_element(song_number) {
+  let audio_container = document.getElementById("audio_container");
+  audio_container.innerHTML =
+    "<audio id=\"audio_element\" onended=\"select_random_song_from_remaining_fresh()\" controls autoplay><source src=\"/playlist/songs?playlist=%playlist_name%&song_number="
+    + String(song_number)
+    + "\"></audio>";
+
+  document.getElementById("audio_element").onend
+}
+function select_random_song_from_remaining_fresh() {
+  let index = Math.floor(Math.random() * (playlist_songs_fresh.length - 1));
+  let song_name = Array_remove(playlist_songs_fresh, index);
+  playlist_songs_listened_to.push(song_name);
+  let song_index = playlist_songs.indexOf(song_name);
+
+  replace_audio_element(song_index);
+  document.getElementById("song_title").innerHTML = song_name;
+  <!-- replace_audio_element(playlist_songs.indexOf(song_name)); -->
+}
+
+</script>
+<body onload=load_procedural_content()>
+  <h1>%playlist_name%</h1>
+  <h2 id="song_title">no song selected</h2>
+  <!-- <input id="song_number_input" type=text /> -->
+  <!-- <button onclick=set_song()>fetch song</button> -->
+  <button onclick=select_random_song_from_remaining_fresh()>next random song</button>
+  <div id="audio_container">
+    <audio id="audio_element" controls>
+      <source src="/playlist/songs?playlist=%playlist_name%&song_number=0">
+    </audio>
+  </div>
+  <ol id="song_entries"></ol>
+</body>
+</html>
+
