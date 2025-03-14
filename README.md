@@ -23,8 +23,20 @@ and the port 8000 of your local (probably NAT'ed) ip address e.g.
 
 ### CLI
 
-the localshare CLI has several command like ```show``` ```help``` and
-```quit```. The ```help``` command shows a better catalogue of available
-localshare commands
+The localshare command line lets you interact with the backend of
+localshare like adding files for playlists.
+
+
+#### Hot-Keys
+
+```Ctrl-C``` - if the line is not empty, clear it, if it is, close localshare (gracefully)
+```Ctrl-W``` - clear the current line
+
+#### Commands
+
+```quit```                     - quit localshare gracefully
+```show```                     - show the currently hosted files and playlists
+```add <file path>```          - add a file to the hosted files list
+```add_playlist <directory>``` - add a directory full of music files to the playlist list
 
 
