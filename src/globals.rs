@@ -56,6 +56,7 @@ impl FileDatabase {
 }
 
 pub struct Playlist {
+	pub directory: Arc<str>,
 	pub name: Arc<str>,
 	pub files: FileDatabase,
 }
@@ -68,7 +69,7 @@ impl Playlist {
 		let playlist_name = playlist_dir.split('/').rev().next()
 			.unwrap_or(playlist_dir);
 
-		return Ok(Playlist{ name: Arc::from(playlist_name), files: playlist_files });
+		return Ok(Playlist{ directory: Arc::from(playlist_dir), name: Arc::from(playlist_name), files: playlist_files });
 	}
 }
 
@@ -153,7 +154,7 @@ impl Globals {
 		let mut playlists = self.playlists.as_ref().unwrap().write().unwrap();
 
 
-		playlists.push(Playlist{ name: Arc::from(playlist_name), files: playlist });
+		playlists.push(Playlist{ directory: Arc::from(dirname), name: Arc::from(playlist_name), files: playlist });
 
 		return Ok(());
 	}
@@ -203,6 +204,7 @@ pub static GLOBALS: std::sync::LazyLock<Globals> = std::sync::LazyLock::new(|| {
 		Ok(filestring) => {
 			let mut file_entries = FileDatabase::new();
 			for line in unsafe{ filestring.as_ascii_unchecked() }.as_str().split('\n') {
+				if line == "" { continue; }
 				if let Err(e) = file_entries.add_file(line) {
 					println!("File mapping failed -> {}", e);
 					continue;
@@ -220,6 +222,7 @@ pub static GLOBALS: std::sync::LazyLock<Globals> = std::sync::LazyLock::new(|| {
 		Ok(filestring) => {
 			let mut playlists = Vec::<Playlist>::new();
 			for line in unsafe{ filestring.as_ascii_unchecked() }.as_str().split('\n') {
+				if line == "" { continue; }
 				match Playlist::from_directory(line) {
 					Ok(playlist) => playlists.push(playlist),
 					Err(e) => println!("WARN: unable to create playlist from {} -> {}", line, e)

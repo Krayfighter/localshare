@@ -24,13 +24,11 @@ use globals::GLOBALS;
 
 
 
-
 fn main() {
 	
 
 	let listener = std::net::TcpListener::bind(
 		std::net::SocketAddr::V4(std::net::SocketAddrV4::new(
-			// std::net::Ipv4Addr::new(192, 168, 12, 182),
 			std::net::Ipv4Addr::UNSPECIFIED,
 			8000
 		))
@@ -59,22 +57,38 @@ fn main() {
 		}
 	});
 
+	// let peer_listener = std::net::TcpListener::bind(
+	// 	std::net::SocketAddr::V4(std::net::SocketAddrV4::new(
+	// 		std::net::Ipv4Addr::UNSPECIFIED, 12555
+	// 	))
+	// ).expect("Failed to bind tcp listener to 12555");
+
+	// let _peer_listener_thread_handle = std::thread::spawn(move || {
+	// 	let mut thread = Vec::<std::thread::JoinHandle<()>>::new();
+	// 	peer_listener.set_nonblocking(true);
+
+	// 	loop {
+	// 		if let Ok((stream, addr)) = peer_listener.accept() {
+	// 			println!("\rINFO: incoming peer at address {:?}", addr);
+	// 		}
+	// 		else {
+	// 			let mut index = 0;
+	// 			todo!()
+	// 			// while index < thread
+	// 		}
+	// 	}
+	// })
 
 
-	// let stdin = std::io::stdin();
+
 	crossterm::terminal::enable_raw_mode().expect("Failed to enable raw mode");
 
-	// ctrlc::set_handler(|| {
-	// 	crossterm::terminal::disable_raw_mode().expect("Failed to exit raw mode");
-	// }).expect("Failed to set Ctrl-C(ancel) signal handler");
 
 	let mut stdout = std::io::stdout();
 	let mut buffer = String::new();
 	'user_mainloop: loop {
 
 		'input: loop {
-			// stdout.write(b"\r> ").unwrap();
-			// std1
 			queue!(stdout,
 				crossterm::terminal::Clear(crossterm::terminal::ClearType::CurrentLine)
 			).expect("Failed to queue to stdout");
@@ -114,7 +128,6 @@ fn main() {
 			
 		}
 		stdout.write(b"\n").expect("Failed to write to stdout");
-		// let read_size = stdin.read_line(&mut buffer).expect("Failed to read from stdin");
 		let line_str = &buffer.as_str()[0..];
 
 		if line_str == "quit" { break; }
@@ -124,13 +137,20 @@ fn main() {
 				crossterm::cursor::MoveTo(0, 0)
 			).expect("Failed to queue to stdout");
 		}else if line_str == "help" {
-			todo!()
+			println!("\
+\rLocalShare - sharing files locally
+\r----------------------------------
+\r
+\rquit / Ctrl-C               - quit the program / clear line then quit program
+\rCtrl-W                      - clear line
+\rshow                        - show the currently hosted files and playlists
+\radd <file_path>             - add a file to the host list
+\radd_playlist <playlist_dir> - add playlist_dir to playlists"
+			);
 		}else if line_str == "show" {
-			// for filename in GLOBALS.file_entries.as_ref().unwrap().read().unwrap().filenames.iter() {
 			for filename in GLOBALS.read_file_entries().filenames.iter() {
 				println!("\r-> file     {}", filename);
 			}
-			// for playlist in GLOBALS.playlists.as_ref().unwrap().read().unwrap().iter() {
 			for playlist in GLOBALS.read_playlists().iter() {
 				println!("\r-> playlist {}", playlist.name);
 			}
@@ -149,15 +169,12 @@ fn main() {
 		}
 		else if line_str.starts_with("add ") {
 			let filename = &line_str[4..];
-			// if std::fs::exists(filename).expect("Failed to check file existence") {
 			if std::path::Path::is_file(filename.as_ref()) {
 				println!("INFO: adding file {} to database", filename);
-				// GLOBALS.push_file_entry(filename, &convert_c_string(&std::fs::read(filename).expect("Failed to read from file")));
 				if let Err(e) = GLOBALS.push_file_entry( filename, filename ) {
 					println!("Error: failed to map file {} | {}", filename, e);
 				}
 			}else if std::path::Path::is_dir(filename.as_ref()) {
-				// println!("INFO: adding dirctory {} (recursively) to database", filename);
 				println!("INFO: adding directories is not yet supported");
 			}
 			else {
@@ -167,18 +184,17 @@ fn main() {
 		buffer.clear();
 	}
 
-	// TODO add non-clobering file saving
+	let mut entry_file = std::fs::File::create("entries.txt").expect("Failed to open entries file for saving");
+	for entry in GLOBALS.get_file_entry_names() {
+		entry_file.write(entry.as_bytes()).expect("failed to write to file");
+		entry_file.write(b"\n").expect("failed to write to file");
+	}
 
-	// let mut entry_file = std::fs::File::create("entries.txt").expect("Failed to open entries file for saving");
-	// for entry in GLOBALS.get_file_entry_names() {
-	// 	entry_file.write(entry.as_bytes()).expect("failed to write to file");
-	// 	entry_file.write(b"\n").expect("failed to write to file");
-	// }
-
-	// let mut playlist_file = std::fs::File::create("playlists.txt").expect("Failed to create/open playlists file");
-	// for playlist in playlist_directories {
-	// 	write!(playlist_file, "{}\n", playlist).expect("Failed to write to playlist file");
-	// }
+	let mut playlist_file = std::fs::File::create("playlists.txt").expect("Failed to create/open playlists file");
+	for playlist_dir in GLOBALS.read_playlists().iter()
+		.map(|playlist| playlist.directory.clone()) {
+		write!(playlist_file, "{}\n", playlist_dir).expect("Failed to write to playlist file");
+	}
 	
 	crossterm::terminal::disable_raw_mode().expect("Failed to exit raw mode");
 

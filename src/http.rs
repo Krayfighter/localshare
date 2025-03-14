@@ -125,14 +125,16 @@ impl<'a> StreamBuffer<'a> {
 						template_index += 1;
 						continue 'write;
 					}
-					self.buffer[self.filled] = template[template_index];
-					self.filled += 1;
+					// self.buffer[self.filled] = template[template_index];
+					self.write(&[template[template_index]])?;
+					// self.filled += 0;
 					template_index += 1;
 				},
 				ParseState::Escaping => {
 					if template[template_index] == b'%' {
-						self.buffer[self.filled] = template[template_index];
-						self.filled += 1;
+						// self.buffer[self.filled] = template[template_index];
+						self.write(b"%")?;
+						// self.filled += 1;
 						template_index += 1;
 						state = ParseState::None;
 						continue 'write;
