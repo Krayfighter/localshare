@@ -15,20 +15,38 @@ function Array_remove(array, index) {
 
 let playlist_songs = [ %playlist_songs% ];
 // cloning in JS sucks
-let playlist_songs_fresh = playlist_songs.map((x) => x);
-let playlist_songs_listened_to = [];
+let playlist_songs_fresh;
+let playlist_songs_listened_to;
+reset_playlist();
+// let playlist_songs_fresh = playlist_songs.map((x) => x);
+// let playlist_songs_listened_to = [];
 
-function load_song_entries() {
-  let song_entries = document.getElementById("song_entries");
+
+function reset_playlist() {
+  playlist_songs_fresh = playlist_songs.map((x) => x);
+  playlist_songs_listened_to = [];
+}
+
+function refresh_song_lists() {
+  let fresh_songs = document.getElementById("fresh_songs");
   let list_string = String();
-  playlist_songs.forEach((song_name) => {
+  playlist_songs_fresh.forEach((song_name) => {
     list_string += "<li>" + song_name + "</li>"
   });
-  song_entries.innerHTML = list_string;
+  fresh_songs.innerHTML = list_string;
+
+  let listened_to_songs = document.getElementById("listened_to_songs");
+  list_string = String();
+  playlist_songs_listened_to.forEach((song_name) => {
+    list_string += "<li>" + song_name + "</li>";
+  });
+  listened_to_songs.innerHTML = list_string;
+
 }
 
 function load_procedural_content() {
-  load_song_entries();
+  refresh_song_lists();
+  select_random_song_from_remaining_fresh();
 }
 
 function replace_audio_element(song_number) {
@@ -38,9 +56,11 @@ function replace_audio_element(song_number) {
     + String(song_number)
     + "\"></audio>";
 
-  document.getElementById("audio_element").onend
+  let audio_element = document.getElementById("audio_element");
+  <!-- audio_element.play(); -->
 }
 function select_random_song_from_remaining_fresh() {
+  if (playlist_songs_fresh.length == 0) { reset_playlist(); }
   let index = Math.floor(Math.random() * (playlist_songs_fresh.length - 1));
   let song_name = Array_remove(playlist_songs_fresh, index);
   playlist_songs_listened_to.push(song_name);
@@ -48,7 +68,8 @@ function select_random_song_from_remaining_fresh() {
 
   replace_audio_element(song_index);
   document.getElementById("song_title").innerHTML = song_name;
-  <!-- replace_audio_element(playlist_songs.indexOf(song_name)); -->
+
+  refresh_song_lists();
 }
 
 </script>
@@ -58,12 +79,20 @@ function select_random_song_from_remaining_fresh() {
   <!-- <input id="song_number_input" type=text /> -->
   <!-- <button onclick=set_song()>fetch song</button> -->
   <button onclick=select_random_song_from_remaining_fresh()>next random song</button>
+  <button onclick=reset_playlist()>reset playlist</button>
   <div id="audio_container">
     <audio id="audio_element" controls>
       <source src="/playlist/songs?playlist=%playlist_name%&song_number=0">
     </audio>
   </div>
-  <ol id="song_entries"></ol>
+  <div style="float: left; width: 50%%;">
+    <h3>Fresh</h3>
+    <ol id="fresh_songs"></ol>
+  </div>
+  <div style="float: left; width: 50%%">
+    <h3>Listened To</h3>
+    <ol id="listened_to_songs"></ol>
+  </div>
 </body>
 </html>
 
