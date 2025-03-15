@@ -38,6 +38,8 @@ localshare like adding files for playlists.
 ```show```                     - show the currently hosted files and playlists
 ```add [<file path>, ...]```   - add a file(s) to the hosted files list
 ```add_playlist <directory>``` - add a directory full of music files to the playlist list
+```download_playlist <name> <playlist url> [audio format]```
+                         - download a playlist (requires yt-dlp to be in $PATH) default audio format is flac
 ```clear```                    - clear the screen
 
 

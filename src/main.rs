@@ -253,22 +253,6 @@ fn main() {
 				}
 			},
 			Some("add") => {
-				// match token_iterator.next() {
-				// 	Some (filename) => {
-				// 		if std::path::Path::is_file(filename.as_ref()) {
-				// 			println!("\rINFO: adding file {} to database", filename);
-				// 			if let Err(e) = GLOBALS.push_file_entry( filename, filename ) {
-				// 				println!("\rError: failed to map file {} | {}", filename, e);
-				// 			}
-				// 		}else if std::path::Path::is_dir(filename.as_ref()) {
-				// 			println!("\rINFO: adding directories is not yet supported");
-				// 		}
-				// 		else {
-				// 			println!("\rError: unable to locate file {}", filename);
-				// 		}
-				// 	},
-				// 	None => todo!(),
-				// }
 				for filename in token_iterator {
 					if std::path::Path::is_file(filename.as_ref()) {
 						println!("\rINFO: adding file {} to database", filename);
@@ -283,7 +267,98 @@ fn main() {
 					}
 				}
 			},
-			Some("download_playlist") => todo!(),
+			Some("download_playlist") => {
+				let playlist_name = match token_iterator.next() {
+					Some(name) => name,
+					None => {
+						println!("\rError: \"download_playlist\" requires a name argument and then a url argument");
+						continue;
+					}
+				};
+				let playlist_url = match token_iterator.next() {
+					Some(token) => token,
+					None => {
+						println!("\rError: \"download_playlist\" requires a name argument and then a url argument");
+						continue;
+					}
+				};
+				let audio_format = token_iterator.next().unwrap_or("flac");
+
+				let mut playlist_dirname = match std::env::current_dir() {
+					Ok(dir) => dir,
+					Err(e) => {
+						println!("\rError: unable to get current operating directory from environment -> {}", e);
+						continue;
+					}
+				};
+				playlist_dirname.push("playlists");
+				match std::fs::exists(&playlist_dirname) {
+					Ok(true) => {},
+					_ => {
+						if let Err(e) = std::fs::DirBuilder::new().create(&playlist_dirname) {
+							println!("\rError: failed to create playlists directory -> {}", e);
+							continue;
+						}
+					}
+				};
+				playlist_dirname.push(playlist_name);
+
+				// if let Ok(true) = std::fs::exists(playlist_dirname) {}
+				match std::fs::exists(&playlist_dirname) {
+					Ok(true) => {},
+					_ => {
+						if let Err(e) = std::fs::DirBuilder::new().create(&playlist_dirname) {
+							println!("\rError: failed to create directory (non-recursive) from playlist name -> {}", e);
+							continue;
+						}
+					}
+				};
+
+				let mut command = std::process::Command::new("yt-dlp");
+				command.arg(playlist_url)
+					.arg("-x")
+					.arg("--audio-format")
+					.arg(audio_format)
+					.arg("--audio-quality")
+					.arg("0"); // in ffmpeg 0 -> highest quality, 10 -> lowest
+
+				command.current_dir(&playlist_dirname);
+				// command.stdout(std::process::Stdio::inherit());
+				// command.stderr(std::process::Stdio::inherit())
+
+				let mut subproc = match command.spawn() {
+					Ok(child) => child,
+					Err(e) => {
+						println!("\rError: failed to spawn yt-dlp downloader backend -> {}", e);
+						continue;
+					}
+				};
+
+				crossterm::terminal::disable_raw_mode().unwrap();
+
+				let exit_status = match subproc.wait() {
+					Ok(status) => status,
+					Err(e) => {
+						println!("\rError: failed to wait for command -> {}", e);
+						continue;
+					}
+				};
+
+				crossterm::terminal::enable_raw_mode().unwrap();
+
+				if exit_status.success() {
+					println!("\ryt-dlp exited successfully with code 0");
+				}else {
+					println!("\rError: yt-dlp failed -> {}", exit_status);
+				}
+
+				;
+				if let Err(e) = GLOBALS.push_playlist_directory(
+					playlist_dirname.as_os_str().to_str().expect("failed to convert OsStr to str")
+				) {
+					println!("Error: failed to add newly downloaded playlist to playlist database -> {}", e);
+				}
+			},
 			Some(_) => { println!("\rError: unrecognized command"); },
 			None => continue 'user_mainloop,
 		}
