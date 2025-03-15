@@ -36,7 +36,8 @@ localshare like adding files for playlists.
 
 ```quit```                     - quit localshare gracefully
 ```show```                     - show the currently hosted files and playlists
-```add <file path>```          - add a file to the hosted files list
+```add [<file path>, ...]```   - add a file(s) to the hosted files list
 ```add_playlist <directory>``` - add a directory full of music files to the playlist list
+```clear```                    - clear the screen
 
 

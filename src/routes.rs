@@ -24,11 +24,6 @@ fn serve_route_index(
 	buffer.push_http_content_type(crate::http::ContentType::text_html)?;
 	buffer.write(b"\r\n")?;
 
-	let static_file_dbase = GLOBALS.static_files.as_ref().unwrap().clone();
-	let static_filenames: &[std::sync::Arc<str>] = static_file_dbase.filenames.as_ref();
-	for filename in static_filenames {
-		println!("\rDBG: static file -> {}", filename);
-	}
 
 	let index_html_file = GLOBALS.get_static_file("index.html");
 	buffer.write_templated(
@@ -265,7 +260,7 @@ fn serve_playlist_song(buffer: &mut crate::http::StreamBuffer, uri_query: &str) 
 pub fn handle_client(mut client: std::net::TcpStream) -> Result<()> {
 	let client_peer_addr = client.peer_addr()?;
 	let client_local_addr = client.local_addr()?;
-	print!("INFO: serving http request from {:?} for route", client_peer_addr);
+	// print!("\rINFO: serving http request from {:?} for route", client_peer_addr);
 	let mut buffer: [u8; 4096] = unsafe{ std::mem::zeroed() };
 
 	let request_type: crate::http::HttpRequestType;
@@ -285,12 +280,16 @@ pub fn handle_client(mut client: std::net::TcpStream) -> Result<()> {
 	else if request_type_string == "POST" { request_type = crate::http::HttpRequestType::POST; }
 	else { bail!("Unhandled HTTP request type"); }
 
-	print!(" {:?}", request_type);
+	// print!(" {:?}", request_type);
 
 	request_uri = request_line_iterator.next()
 		.ok_or_else(|| { anyhow!("Invalid HTTP request structure") })?;
 
-	println!(" {:?}", request_uri);
+	// println!(" {:?}", request_uri);
+	println!(
+		"\rINFO: serving http request from {:?} for route {:?} {:?}",
+		client_peer_addr, request_type, request_uri
+	);
 
 	let _http_version = request_line_iterator.next()
 		.ok_or_else(|| { anyhow!("Invalid HTTP request structure") })?;
