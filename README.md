@@ -3,9 +3,13 @@
 
 local filesharing http server with a web client
 
-## dependencies
+## Dependencies
 
 rust (and Cargo)
+
+### Optional Dependencies
+
+yt-dlp (for downloading playlists from internet services)
 
 ## Building
 
@@ -29,17 +33,17 @@ localshare like adding files for playlists.
 
 #### Hot-Keys
 
-```Ctrl-C``` - if the line is not empty, clear it, if it is, close localshare (gracefully)
+```Ctrl-C``` - if the line is not empty, clear it, if it is, close localshare (gracefully)<br />
 ```Ctrl-W``` - clear the current line
 
 #### Commands
 
-```quit```                     - quit localshare gracefully
-```show```                     - show the currently hosted files and playlists
-```add [<file path>, ...]```   - add a file(s) to the hosted files list
-```add_playlist <directory>``` - add a directory full of music files to the playlist list
+```quit```                     - quit localshare gracefully<br />
+```show```                     - show the currently hosted files and playlists<br />
+```add [<file path>, ...]```    - add a file(s) to the hosted files list<br />
+```add_playlist <directory>``` - add a directory full of music files to the playlist list<br />
 ```download_playlist <name> <playlist url> [audio format]```
-                         - download a playlist (requires yt-dlp to be in $PATH) default audio format is flac
+                         - download a playlist (requires yt-dlp to be in $PATH) default audio format is flac<br />
 ```clear```                    - clear the screen
 
 
