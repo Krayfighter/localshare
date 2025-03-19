@@ -1,5 +1,5 @@
 
-use std::sync::{Arc, RwLock, RwLockReadGuard};
+use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard};
 
 use anyhow::Result;
 
@@ -74,32 +74,38 @@ impl Playlist {
 }
 
 pub struct Globals {
-	file_entries: Option<RwLock<FileDatabase>>,
-	playlists: Option<RwLock<Vec<Playlist>>>,
-	pub static_files: Option<Arc<FileDatabase>>,
-	pub favicon: Option<memmap2::Mmap>,
+	file_entries: RwLock<FileDatabase>,
+	playlists: RwLock<Vec<Playlist>>,
+	peers: RwLock<Vec<std::net::IpAddr>>,
+	pub thread_pool:  Mutex<crate::ThreadPool<()>>,
+	pub static_files: FileDatabase,
+	pub favicon: memmap2::Mmap,
 }
 
 impl Globals {
 	pub fn read_file_entries(&self) -> RwLockReadGuard<FileDatabase> {
-		return self.file_entries.as_ref().unwrap()
+		return self.file_entries
 			.read().expect("Failed to get read guard from file entries RwLock");
 	}
 
 	pub fn read_playlists(&self) -> RwLockReadGuard<Vec<Playlist>> {
-		return self.playlists.as_ref().unwrap().read()
+		return self.playlists.read()
 			.expect("Failed to get read guard from playlists RwLock");
+	}
+
+	pub fn read_peers(&self) -> RwLockReadGuard<Vec<std::net::IpAddr>> {
+		return self.peers.read().expect("Failed to lock global peers for reading");
 	}
 	
 	pub fn get_file_entry_names(&self) -> Vec<Arc<str>> {
-		let entries = self.file_entries.as_ref().unwrap();
-		let filenames = entries.read().unwrap().filenames.clone();
+		// let entries = self.file_entries;
+		let filenames = self.file_entries.read().unwrap().filenames.clone();
 
 		return filenames;
 	}
 
 	pub fn get_file_entry_by_name(&self, name: &str) -> Option<Arc<memmap2::Mmap>> {
-		let entries = self.file_entries.as_ref().unwrap().read().unwrap();
+		let entries = self.file_entries.read().unwrap();
 
 		let (index, _filename) = match entries.filenames
 			.iter()
@@ -117,7 +123,7 @@ impl Globals {
 		let file = std::fs::File::open(fpath.as_ref())?;
 		let filemap = unsafe{ memmap2::Mmap::map(&file) }?;
 
-		let mut entries = self.file_entries.as_ref().unwrap().write().unwrap();
+		let mut entries = self.file_entries.write().unwrap();
 
 		entries.filenames.push(Arc::from(name));
 		entries.file_contents.push(Arc::from(filemap));
@@ -151,7 +157,7 @@ impl Globals {
 			}
 		}
 
-		let mut playlists = self.playlists.as_ref().unwrap().write().unwrap();
+		let mut playlists = self.playlists.write().unwrap();
 
 
 		playlists.push(Playlist{ directory: Arc::from(dirname), name: Arc::from(playlist_name), files: playlist });
@@ -160,7 +166,7 @@ impl Globals {
 	}
 
 	pub fn get_song_by_playlist_and_index(&self, playlist_name: &str, song_number: u32) -> Option<Arc<memmap2::Mmap>> {
-		let playlists = self.playlists.as_ref().unwrap().read().unwrap();
+		let playlists = self.playlists.read().unwrap();
 
 		let index = match playlists.iter()
 			.map(|playlist| playlist.name.clone())
@@ -183,7 +189,7 @@ impl Globals {
 
 	pub fn get_static_file(&self, filename: &str) -> Option<Arc<memmap2::Mmap>> {
 
-		let index = match self.static_files.as_ref().unwrap()
+		let index = match self.static_files
 			.filenames.iter()
 			.enumerate()
 			.find(|(_iter, fpath)| fpath.ends_with(filename))
@@ -192,7 +198,15 @@ impl Globals {
 			None => return None
 		};
 
-		return self.static_files.as_ref().unwrap().file_contents.get(index).cloned();
+		return self.static_files.file_contents.get(index).cloned();
+	}
+
+	pub fn push_peer(&self, peer: std::net::IpAddr) {
+		self.peers.write().expect("failed to lock peers for writing").push(peer);
+	}
+
+	pub fn push_thread<T: FnOnce() -> Result<()> + Send + 'static>(&self, closure: T) {
+		self.thread_pool.lock().expect("Failed to lock global thread pool").spawn(closure);
 	}
 }
 
@@ -241,10 +255,15 @@ pub static GLOBALS: std::sync::LazyLock<Globals> = std::sync::LazyLock::new(|| {
 		.expect("Failed to map static files directory into memory");
 	
 	return Globals {
-		file_entries: Some(RwLock::new(file_entries)),
-		favicon: Some(favicon),
-		playlists: Some(RwLock::new(playlists)),
-		static_files: Some(Arc::from(static_files))
+		file_entries: RwLock::new(file_entries),
+		playlists: RwLock::new(playlists),
+		peers: RwLock::new(vec![
+			std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 12, 208)),
+			std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 12, 118)),
+		]),
+		thread_pool: Mutex::new(crate::ThreadPool::new()),
+		static_files,
+		favicon
 	};
 });
 

@@ -1,26 +1,60 @@
 
-use std::io::{Read, Write};
+use std::{io::{Read, Write}, str::FromStr};
 
 use anyhow::Result;
 
-use crate::{globals::GLOBALS, http::ClosureReader, http::ReadInto};
+use crate::{globals::GLOBALS, http::{make_http_request, ClosureReader, HttpHeader, ReadInto}};
 
 
 
 fn return_routing_error(buffer: &mut crate::http::StreamBuffer, error_string: &str) {
-	buffer.push_http_primary_header("HTTP/1.1", 400, "Routing Error").unwrap();
+	buffer.push_http_response_primary_header("HTTP/1.1", 400, "Routing Error").unwrap();
 
 	buffer.begin_http_body().unwrap();
 	write!(buffer, "<h2>Routing Error</h2><p>{}</p>", error_string).unwrap();
 	buffer.flush().unwrap();
 }
 
-fn serve_route_index(
+fn serve_get_index(
 	client_local_addr: std::net::SocketAddr,
 	client_peer_addr: std::net::SocketAddr,
 	buffer: &mut crate::http::StreamBuffer
 ) -> Result<()> {
-	buffer.push_http_primary_header("HTTP/1.1", 200, "OK")?;
+
+	// // TODO this is all very crazy and likely quite slow
+	// let mut peer_files: Vec<(std::net::IpAddr, Vec<Box<str>>)> = vec!();
+	// for addr in GLOBALS.read_peers().iter() {
+	// 	GLOBALS.push_thread(move || {
+	// 		let mut stream  = match std::net::TcpStream::connect((*addr, 8000)) {
+	// 			Ok(stream) => stream,
+	// 			Err(e) => {
+	// 				println!("\rError: failed to connect to peer -> {}", e);
+	// 				return Ok(())
+	// 			}
+	// 		};
+	// 		#[allow(invalid_value)]
+	// 		let mut output_buffer: [u8; 4096] = unsafe { std::mem::MaybeUninit::uninit().assume_init() };
+
+	// 		let mut stream_output_buffer = crate::http::StreamBuffer::new(&mut output_buffer[0..], &mut stream);
+	// 		make_http_request(&mut stream_output_buffer, crate::http::HttpMethod::GET, "/files", &[])?;
+
+	// 		let mut input_buffer = String::new();
+	// 		stream.read_to_string(&mut input_buffer)?;
+
+	// 		if let Some((_head, body)) = input_buffer.as_str().split_once("\r\n\r\n") {
+	// 			let mut current_peer_files = vec!();
+	// 			for file in body.split('\n') {
+	// 				current_peer_files.push(Box::from(file));
+	// 			}
+	// 			peer_files.push((*addr, current_peer_files));
+	// 		} else {
+	// 			println!("\rError: unexpected response from peer");
+	// 			continue;
+	// 		}
+	// 	})
+	// }
+	
+	buffer.push_http_response_primary_header("HTTP/1.1", 200, "OK")?;
 	buffer.push_http_content_type(crate::http::ContentType::text_html)?;
 	buffer.write(b"\r\n")?;
 
@@ -36,13 +70,17 @@ fn serve_route_index(
 				filename, GLOBALS.read_file_entries().filenames.iter(),
 				[ b"<a href=\"/file/", filename.as_bytes(), b"\">", filename.as_bytes(), b"</a><br />" ]
 			),
+			// &mut iterator_reader!(
+			// 	peer_entry_tuple, peer_files.iter(),
+			// 	[ b"<li>peer |", peer_entry_tuple.0.to_string().as_bytes(), b"| has files" ]
+			// ),
 			&mut iterator_reader!(
 				playlist_name, GLOBALS.read_playlists().iter().map(|playlist| playlist.name.as_ref()),
 				[
 					b"<a href=\"/playlist?playlist=", playlist_name.as_bytes(),
 					b"&song_number=0\">", playlist_name.as_bytes(), b"</a><br />"
 				]
-			)
+			),
 		]
 	)?;
 	return Ok(());
@@ -50,7 +88,7 @@ fn serve_route_index(
 
 fn return_not_found(buffer: &mut crate::http::StreamBuffer) -> Result<()> {
 	buffer.clear();
-	buffer.push_http_primary_header("HTTP/1.1", 404, "Not Found")?;
+	buffer.push_http_response_primary_header("HTTP/1.1", 404, "Not Found")?;
 	buffer.push_http_content_type(crate::http::ContentType::text_html)?;
 
 	
@@ -59,21 +97,19 @@ fn return_not_found(buffer: &mut crate::http::StreamBuffer) -> Result<()> {
 	return Ok(());
 }
 
-fn serve_route_favicon(buffer: &mut crate::http::StreamBuffer) -> Result<()> {
-	buffer.push_http_primary_header("HTTP/1.1", 200, "OK")?;
+fn serve_get_favicon(buffer: &mut crate::http::StreamBuffer) -> Result<()> {
+	buffer.push_http_response_primary_header("HTTP/1.1", 200, "OK")?;
 	buffer.push_http_content_type(crate::http::ContentType::image_x_icon)?;
 	buffer.push_http_transfer_encoding(crate::http::TransferEncoding::binary)?;
 
-	#[allow(static_mut_refs)]
-	let favicon_slice = GLOBALS.favicon.as_ref().unwrap();
-	buffer.push_http_content_length(favicon_slice.len())?;
+	buffer.push_http_content_length(GLOBALS.favicon.len())?;
 	buffer.write(b"\r\n")?;
-	buffer.write(favicon_slice.as_ref())?;
+	buffer.write(GLOBALS.favicon.as_ref())?;
 
 	return Ok(());
 }
 
-fn serve_route_file(
+fn serve_get_file(
 	buffer: &mut crate::http::StreamBuffer,
 	uri_path: &str,
 ) -> Result<()> {
@@ -81,7 +117,7 @@ fn serve_route_file(
 
 	let result = GLOBALS.get_file_entry_by_name(filepath);
 	if let Some(file) = result {
-		buffer.push_http_primary_header("HTTP/1.1", 200, "OK")?;
+		buffer.push_http_response_primary_header("HTTP/1.1", 200, "OK")?;
 		buffer.push_http_content_type(crate::http::ContentType::text_plain)?;
 		buffer.push_http_transfer_encoding(crate::http::TransferEncoding::binary)?;
 		buffer.push_http_content_length(file.len())?;
@@ -92,6 +128,18 @@ fn serve_route_file(
 		buffer.write(file.as_ref())?;
 	}else {
 		return return_not_found(buffer);
+	}
+
+	return Ok(());
+}
+
+fn serve_get_files(buffer: &mut crate::http::StreamBuffer) -> Result<()> {
+	buffer.push_http_response_primary_header("HTTP/1.1", 200, "OK")?;
+	buffer.push_http_content_type(crate::http::ContentType::text_plain)?;
+	buffer.write(b"\r\n")?;
+
+	for entry in GLOBALS.read_file_entries().filenames.clone() {
+		write!(buffer, "{}\n", entry)?;
 	}
 
 	return Ok(());
@@ -156,7 +204,7 @@ fn serve_playlist(buffer: &mut crate::http::StreamBuffer, playlist_query: &str) 
 
 		let playlist = playlists.get(iter).unwrap();
 
-		buffer.push_http_primary_header("HTTP/1.1", 200, "OK")?;
+		buffer.push_http_response_primary_header("HTTP/1.1", 200, "OK")?;
 		buffer.push_http_content_type(crate::http::ContentType::text_html)?;
 
 		
@@ -233,7 +281,7 @@ fn serve_playlist_song(buffer: &mut crate::http::StreamBuffer, uri_query: &str) 
 	};
 
 
-	buffer.push_http_primary_header("HTTP/1.1", 200, "OK")?;
+	buffer.push_http_response_primary_header("HTTP/1.1", 200, "OK")?;
 	buffer.push_http_content_type(crate::http::ContentType::audio_flac)?;
 	buffer.push_http_transfer_encoding(crate::http::TransferEncoding::binary)?;
 	buffer.push_http_content_disposition(crate::http::ContentDisposition::Inline)?;
@@ -257,38 +305,164 @@ fn serve_playlist_song(buffer: &mut crate::http::StreamBuffer, uri_query: &str) 
 	return Ok(());
 }
 
+fn serve_get_peers(buffer: &mut crate::http::StreamBuffer) -> Result<()> {
+	buffer.push_http_response_primary_header("HTTP/1.1", 200, "OK")?;
+	buffer.push_http_content_type(crate::http::ContentType::text_plain)?;
+	buffer.write(b"\r\n")?;
+
+	buffer.write_templated(
+		b"%peer_addrs%",
+		&["peer_addrs"],
+		&mut [
+			&mut iterator_reader!(addr, GLOBALS.read_peers().iter(), [
+				addr.to_string().as_bytes(), b"\n"
+			])
+		]
+	)?;
+
+	return Ok(());
+}
+
+fn serve_get_peer_files(buffer: &mut crate::http::StreamBuffer) -> Result<()> {
+	let mut fetch_pool = crate::ThreadPool::new();
+	for peer_addr in GLOBALS.read_peers().clone().into_iter() {
+		fetch_pool.spawn(move || {
+			let mut stream = std::net::TcpStream::connect((peer_addr, 8000))?;
+			stream.write(b"GET /files HTTP/1.1")?;
+
+			// NOTE this may fix a problem with incomplete reads if un-comented
+			// std::thread::sleep(std::time::Duration::from_millis(10));
+
+			#[allow(invalid_value)]
+			let mut buffer: [u8; 4096] = unsafe{ std::mem::MaybeUninit::uninit().assume_init() };
+			let buffer_filled = stream.read(&mut buffer)?;
+
+			let (_head, body) = unsafe{ buffer[0..buffer_filled].as_ascii_unchecked() }
+				.as_str().split_once("\r\n")
+				.expect("Failed to split body from input from peer");
+
+			// for file in body.split("\n") {
+				
+			// }
+			let files = body.split("\n").map(|file| file.to_owned())
+				.collect::<Vec<String>>();
+
+			return Ok((peer_addr, files));
+		});
+	}
+
+	buffer.push_http_response_primary_header("HTTP/1.1", 200, "OK")?;
+	buffer.push_http_content_type(crate::http::ContentType::text_html)?;
+	buffer.write(b"\r\n[")?;
+	buffer.flush()?;
+
+	for peer_entry in fetch_pool.into_iter() {
+		match peer_entry {
+			Some(Ok((peer_addr, file_list))) => {
+				for file in file_list { write!(buffer, "[\"{}\", \"{}\"]", peer_addr, file)?; }
+				buffer.flush()?;
+			},
+			Some(Err(e)) => {
+				println!("\rError: failed to fetch files from peer -> {e}");
+			},
+			None => { std::thread::sleep(std::time::Duration::from_millis(10)); }
+		}
+	}
+	
+	return Ok(());
+}
+
+fn serve_post_peers(
+	headers: &[crate::http::HttpHeader],
+	body: &[u8],
+) -> Result<()> {
+
+	let body_str = body.as_ascii().unwrap().as_str();
+
+	for line in body_str.split('\n') {
+		if let Ok(addr) = std::net::IpAddr::from_str(line) {
+			GLOBALS.push_peer(addr);
+		}else {
+			todo!();
+		}
+	}
+
+	return Ok(());
+}
+
 pub fn handle_client(mut client: std::net::TcpStream) -> Result<()> {
 	let client_peer_addr = client.peer_addr()?;
 	let client_local_addr = client.local_addr()?;
-	// print!("\rINFO: serving http request from {:?} for route", client_peer_addr);
+
 	let mut buffer: [u8; 4096] = unsafe{ std::mem::zeroed() };
+	let mut buffer_filled = 0;
 
-	let request_type: crate::http::HttpRequestType;
-	let request_uri: &str;
+	// let bufreader = std::io::BufReader::with_capacity(4096, client);
+	// let mut buffer = String::with_capacity(4096);
 
-	client.read(&mut buffer)?;
-	let buffer_string = unsafe{ buffer.as_ascii_unchecked() }.as_str();
+	buffer_filled += client.read(&mut buffer)?;
+// let _ = client.read_to_string(&mut buffer)?;
+// let buf_cursor = std::io::BorrowedBuf::from(unsafe{ buffer.as_bytes_mut() });
+// let _ = client.read_buf(buf_cursor);
+	// let buffer_string = unsafe{ buffer.as_ascii_unchecked() }.as_str();
 
-	let mut header_iterator = buffer_string.split("\r\n");
+	let (head, body) = match unsafe{ buffer.as_ascii_unchecked() }.as_str().split_once("\r\n\r\n") {
+		Some(split_tuple) => split_tuple,
+		None => {
+			std::thread::sleep(std::time::Duration::from_millis(20));
+			buffer_filled += client.read(&mut buffer[buffer_filled..])?;
+			let buffer_str = unsafe{ buffer.as_ascii_unchecked() }.as_str();
+			match buffer_str.split_once("\r\n\r\n") {
+				Some(split_tuple) => split_tuple,
+				None => {
+					println!("\rWARN: failed to read body separator for request even after waiting");
+					(buffer_str, "")
+				}
+			}
+		}
+	};
+		// .unwrap_or((&buffer_string, ""));
+	let body = body.as_bytes();
+
+	let mut header_iterator = head.split("\r\n");
 	let request_line = header_iterator.next()
 		.ok_or_else(|| { anyhow!("Invalid HTTP request structure") })?;
 	let mut request_line_iterator = request_line.split(" ");
-	let request_type_string = request_line_iterator.next()
+	let request_method_string = request_line_iterator.next()
 		.ok_or_else(|| { anyhow!("Invalid HTTP request structure") })?;
 
-	if request_type_string == "GET" { request_type = crate::http::HttpRequestType::GET; }
-	else if request_type_string == "POST" { request_type = crate::http::HttpRequestType::POST; }
+	let mut headers = vec!();
+	let mut header = header_iterator.next();
+
+	// TODO parse Content-Length http header so that a body can be fully downloaded
+	// if it is a substantial size
+	loop {
+		if header.is_none() { break; }
+		if header.unwrap() == "" { break; }
+
+		if let Some((header_type, header_value)) = header.unwrap().split_once(": ") {
+			if let Some(header) = HttpHeader::from_str_pair(header_type, header_value) {
+				headers.push(header);
+			}else { println!("\rDBG: malformed or unhandled http header -> {}", header.unwrap()); }
+		}else { println!("\rDBG: received malformed http header -> {}", header.unwrap()); }
+
+		header = header_iterator.next();
+	}
+
+	let request_method: crate::http::HttpMethod;
+	let request_uri: &str;
+
+	if request_method_string == "GET" { request_method = crate::http::HttpMethod::GET; }
+	else if request_method_string == "POST" { request_method = crate::http::HttpMethod::POST; }
 	else { bail!("Unhandled HTTP request type"); }
 
-	// print!(" {:?}", request_type);
 
 	request_uri = request_line_iterator.next()
 		.ok_or_else(|| { anyhow!("Invalid HTTP request structure") })?;
 
-	// println!(" {:?}", request_uri);
 	println!(
 		"\rINFO: serving http request from {:?} for route {:?} {:?}",
-		client_peer_addr, request_type, request_uri
+		client_peer_addr, request_method, request_uri
 	);
 
 	let _http_version = request_line_iterator.next()
@@ -314,19 +488,33 @@ pub fn handle_client(mut client: std::net::TcpStream) -> Result<()> {
 	let mut uri_path_base = uri_path_iter.next();
 	if let Some("") = uri_path_base { uri_path_base = uri_path_iter.next(); }
 
-	match uri_path_base {
-		None | Some("") => serve_route_index(client_local_addr, client_peer_addr, &mut buffer)?,
-		Some("favicon.ico") => serve_route_favicon(&mut buffer)?,
-		Some("file") => serve_route_file(&mut buffer, uri_path)?,
-		Some("playlist") => {
-			match uri_path_iter.next() {
-				Some("songs") => { serve_playlist_song(&mut buffer, uri_query)?; },
-				Some(_) => { return_not_found(&mut buffer)?; },
-				None => { serve_playlist(&mut buffer, uri_query)?; }
+	match request_method {
+		crate::http::HttpMethod::GET => {
+			match uri_path_base {
+				None | Some("") => serve_get_index(client_local_addr, client_peer_addr, &mut buffer)?,
+				Some("favicon.ico") => serve_get_favicon(&mut buffer)?,
+				Some("file") => serve_get_file(&mut buffer, uri_path)?,
+				Some("files") => serve_get_files(&mut buffer)?,
+				Some("playlist") => {
+					match uri_path_iter.next() {
+						Some("songs") => { serve_playlist_song(&mut buffer, uri_query)?; },
+						Some(_) => { return_not_found(&mut buffer)?; },
+						None => { serve_playlist(&mut buffer, uri_query)?; }
+					}
+				},
+				Some("peers") => { serve_get_peers(&mut buffer)?; },
+				Some("peer_files") => { serve_get_peer_files(&mut buffer)?; }
+				_ => return_not_found(&mut buffer)?,
 			}
-		}
-		_ => return_not_found(&mut buffer)?,
-	}
+		},
+		crate::http::HttpMethod::POST => {
+			match uri_path_base {
+				Some("peers") => { serve_post_peers(&headers, body)?; },
+				_ => return_not_found(&mut buffer)?,
+			}
+		},
+		_ => return_not_found(&mut buffer)?
+	};
 
 
 	buffer.flush()?;

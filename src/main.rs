@@ -1,12 +1,9 @@
 #![feature(ascii_char)]
-#![feature(trait_alias)]
-#![feature(unboxed_closures)]
-#![feature(fn_traits)]
 #![feature(generic_arg_infer)]
 
 // TODO remove file serving duplcates in Globals::add_file
 
-use std::io::Write;
+use std::{io::Write, str::FromStr, sync::Arc};
 
 
 #[macro_use]
@@ -23,6 +20,9 @@ mod globals;
 
 
 use globals::GLOBALS;
+use anyhow::Result;
+use routes::handle_client;
+
 
 
 struct CommandTokenIter<'a> {
@@ -79,35 +79,80 @@ impl<'a> Iterator for CommandTokenIter<'a> {
 }
 
 
+struct ThreadPool<T> {
+	threads: Vec<std::thread::JoinHandle<Result<T>>>
+}
+
+impl<T: Send + Sync + 'static + Sized> ThreadPool<T> {
+	pub fn new() -> Self { return Self{ threads: vec!() } }
+	pub fn spawn<F: FnOnce() -> Result<T> + Send + 'static>(&mut self, closure: F) {
+		let new_thread_handle = std::thread::spawn(closure);
+		self.threads.push(new_thread_handle);
+	}
+	pub fn clean_threads(&mut self) {
+		let mut index = 0;
+		while index < self.threads.len() {
+			if unsafe{ self.threads.get_unchecked(index) }.is_finished() {
+				let thread = self.threads.swap_remove(index);
+				match thread.join() {
+					Err(e) => { println!("\rERROR: thread pool failed to join thread that supposedly finished -> {:?}", e) },
+					Ok(Err(e)) => { println!("\rError: thread pool joined thread that encountered a critical error -> {e}") },
+					_ => {}
+				};
+				continue;
+			}
+			index += 1;
+		}
+	}
+}
+
+impl<T> Iterator for ThreadPool<T> {
+    type Item = Option<Result<T>>;
+
+	fn next(&mut self) -> Option<Self::Item> {
+		if self.threads.len() == 0 { return None; }
+		for (index, handle) in self.threads.iter().enumerate() {
+			if handle.is_finished() {
+				return Some(Some(
+					self.threads.swap_remove(index).join().expect("Failed to join thread from pool")
+				));
+			}
+		}
+		return Some(None);
+	}
+}
+
+
 fn main() {
-	
+
+	let _thread_cleaner_join_handle = std::thread::spawn(|| {
+		loop {
+			GLOBALS.thread_pool.lock().expect("Failed to lock global thread pool").clean_threads();
+			std::thread::sleep(std::time::Duration::from_millis(100));
+		}
+	});
 
 	let listener = std::net::TcpListener::bind(
-		std::net::SocketAddr::V4(std::net::SocketAddrV4::new(
-			std::net::Ipv4Addr::UNSPECIFIED,
-			8000
-		))
-	).expect("Failed to bind tcp listener to localhost");
+		std::net::SocketAddrV4::new(std::net::Ipv4Addr::UNSPECIFIED, 8000)
+	).expect("Failed to bind tcp listener to unspecified address at port 8000");
 
 	println!("\rINFO: serving at local addr: {:?}", listener.local_addr());
 
-
-	let _listener_thread_handle = std::thread::spawn(move || {
-		let mut threads = Vec::<std::thread::JoinHandle<()>>::new();
-		listener.set_nonblocking(true).expect("Failed to set listener socket to nonblocking");
-
+	GLOBALS.push_thread(move || {
+		listener.set_nonblocking(true).expect("Failed to set tcp socket to nonblocking");
 		loop {
 			if let Ok((stream, _addr)) = listener.accept() {
-				threads.push(std::thread::spawn(move || { let _ = routes::handle_client(stream); } ))
+				GLOBALS.push_thread(move || {
+					match routes::handle_client(stream) {
+						Ok(()) => {},
+						Err(e) => {
+							println!("\rError: failed to serve client -> {e}");
+						}
+					};
+					return Ok(());
+				});
 			}else {
-				let mut index = 0;
-				while index < threads.len() {
-					if threads[index].is_finished() {
-						threads.swap_remove(index).join().expect("Failed to join finished thread");
-					}
-					index += 1;
-				}
-				std::thread::sleep(std::time::Duration::from_millis(10))
+				std::thread::sleep(std::time::Duration::from_millis(10));
 			}
 		}
 	});
@@ -158,7 +203,7 @@ fn main() {
 					_ => {}
 				}
 			}
-			
+		
 		}
 		stdout.write(b"\n").expect("Failed to write to stdout");
 		let line_str = &buffer.as_str()[0..];
@@ -267,6 +312,28 @@ fn main() {
 					}
 				}
 			},
+			Some("add_peer") => {
+				let peer_addr = match token_iterator.next() {
+					Some(addr_string) => {
+						if let Some(_) = token_iterator.next() {
+							println!("\rError: too many arguments to add_peer");
+							continue;
+						}
+						match std::net::IpAddr::from_str(addr_string) {
+							Ok(addr) => addr,
+							Err(e) => {
+								println!("\rError: failed to parse address of peer -> {}", e);
+								continue;
+							}
+						}
+					},
+					None => {
+						println!("\rError: add_peer expect an address");
+						continue;
+					}
+				};
+				GLOBALS.push_peer(peer_addr);
+			}
 			Some("download_playlist") => {
 				let playlist_name = match token_iterator.next() {
 					Some(name) => name,
@@ -375,7 +442,7 @@ fn main() {
 		.map(|playlist| playlist.directory.clone()) {
 		write!(playlist_file, "{}\n", playlist_dir).expect("Failed to write to playlist file");
 	}
-	
+
 	crossterm::terminal::disable_raw_mode().expect("Failed to exit raw mode");
 
 	return;
