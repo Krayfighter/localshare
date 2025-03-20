@@ -331,7 +331,7 @@ fn serve_get_peer_files(buffer: &mut crate::http::StreamBuffer) -> Result<()> {
 			stream.write(b"GET /files HTTP/1.1")?;
 
 			// NOTE this may fix a problem with incomplete reads if un-comented
-			// std::thread::sleep(std::time::Duration::from_millis(10));
+			std::thread::sleep(std::time::Duration::from_millis(10));
 
 			#[allow(invalid_value)]
 			let mut buffer: [u8; 4096] = unsafe{ std::mem::MaybeUninit::uninit().assume_init() };

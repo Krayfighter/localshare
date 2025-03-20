@@ -258,8 +258,7 @@ pub static GLOBALS: std::sync::LazyLock<Globals> = std::sync::LazyLock::new(|| {
 		file_entries: RwLock::new(file_entries),
 		playlists: RwLock::new(playlists),
 		peers: RwLock::new(vec![
-			std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 12, 208)),
-			std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 12, 118)),
+			std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 12, 182)),
 		]),
 		thread_pool: Mutex::new(crate::ThreadPool::new()),
 		static_files,
