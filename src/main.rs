@@ -142,6 +142,7 @@ fn main() {
 		listener.set_nonblocking(true).expect("Failed to set tcp socket to nonblocking");
 		loop {
 			if let Ok((stream, _addr)) = listener.accept() {
+				stream.set_nonblocking(true).expect("Failed to set stream to nonblocking mode");
 				GLOBALS.push_thread(move || {
 					match routes::handle_client(stream) {
 						Ok(()) => {},

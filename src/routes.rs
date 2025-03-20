@@ -134,6 +134,7 @@ fn serve_get_file(
 }
 
 fn serve_get_files(buffer: &mut crate::http::StreamBuffer) -> Result<()> {
+	println!("\rINFO: SERVING FILES");
 	buffer.push_http_response_primary_header("HTTP/1.1", 200, "OK")?;
 	buffer.push_http_content_type(crate::http::ContentType::text_plain)?;
 	buffer.write(b"\r\n")?;
@@ -141,6 +142,10 @@ fn serve_get_files(buffer: &mut crate::http::StreamBuffer) -> Result<()> {
 	for entry in GLOBALS.read_file_entries().filenames.clone() {
 		write!(buffer, "{}\n", entry)?;
 	}
+
+	buffer.flush()?;
+
+	println!("\rINFO: FINISHED SERVING FILES");
 
 	return Ok(());
 }
@@ -329,20 +334,49 @@ fn serve_get_peer_files(buffer: &mut crate::http::StreamBuffer) -> Result<()> {
 		fetch_pool.spawn(move || {
 			println!("\rDBG: RUNNING IN THREAD");
 			let mut stream = std::net::TcpStream::connect((peer_addr, 8000))?;
+			stream.set_nonblocking(false)?;
 			stream.write(b"GET /files HTTP/1.1")?;
 
-			// NOTE this may fix a problem with incomplete reads if un-comented
-			std::thread::sleep(std::time::Duration::from_millis(10));
+			// // NOTE this may fix a problem with incomplete reads if un-comented
+			// std::thread::sleep(std::time::Duration::from_millis(10));
 
 			#[allow(invalid_value)]
 			let mut buffer: [u8; 4096] = unsafe{ std::mem::MaybeUninit::uninit().assume_init() };
-			let buffer_filled = stream.read(&mut buffer)?;
+			let mut buffer_filled = 0;
+
+			println!("\rJUST BEFORE READ");
+
+			// let buffer_filled = stream.read(&mut buffer)?;
+			// let mut filled = 0;
+			// while filled > 0 {
+			loop {
+				match stream.read(&mut buffer[buffer_filled..]) {
+					Ok(count) => {
+						if count == 0 && buffer_filled != 0 { break; }
+						buffer_filled += count;
+					},
+					Err(e) => {
+						// filled = 1;
+						println!("\rWARN: error reading from tcp socket -> {e}");
+						break;
+					}
+				}
+			}
 
 			println!("\rDBG: BUFFER FILLED -> {}", buffer_filled);
 
-			let (_head, body) = unsafe{ buffer[0..buffer_filled].as_ascii_unchecked() }
+			let (_head, body) = match unsafe{ buffer[0..buffer_filled].as_ascii_unchecked() }
 				.as_str().split_once("\r\n")
-				.expect("Failed to split body from input from peer");
+			{
+				Some(pair) => pair,
+				None => {
+					println!(
+						"\rError: failed to split NOTE: buffer contents -> {}",
+						unsafe{ (&buffer[0..buffer_filled]).as_ascii_unchecked() }.as_str()
+					);
+					panic!("Thread Cannot continue");
+				}
+			};
 
 			// for file in body.split("\n") {
 				
@@ -403,7 +437,21 @@ pub fn handle_client(mut client: std::net::TcpStream) -> Result<()> {
 	// let bufreader = std::io::BufReader::with_capacity(4096, client);
 	// let mut buffer = String::with_capacity(4096);
 
-	buffer_filled += client.read(&mut buffer)?;
+	// let mut read_size = client.read(&mut buffer[buffer_filled..])?;
+	let mut read_size = 1;
+	while read_size > 0 {
+		match client.read(&mut buffer[buffer_filled..]) {
+			Ok(count) => {
+				read_size = count;
+				buffer_filled += count;
+			},
+			Err(e) => {
+				println!("\rWARN: error reading from tcp socket -> {e}");
+				break;
+			}
+		}
+	}
+	// buffer_filled += client.read(&mut buffer)?;
 // let _ = client.read_to_string(&mut buffer)?;
 // let buf_cursor = std::io::BorrowedBuf::from(unsafe{ buffer.as_bytes_mut() });
 // let _ = client.read_buf(buf_cursor);
@@ -526,4 +574,14 @@ pub fn handle_client(mut client: std::net::TcpStream) -> Result<()> {
 	return Ok(());
 }
 
+#[cfg(test)]
+mod test_routes {
+	#[test]
+	fn test_get_index() {
+		let mut output_buffer = Vec::<u8>::new();
+		let mut back_buffer: [u8; 4096] = unsafe{ std::mem::zeroed() };
+		let mut stream_buffer = crate::http::StreamBuffer::new(&mut back_buffer, &mut output_buffer);
 
+		return
+	}
+}
