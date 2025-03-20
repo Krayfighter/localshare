@@ -327,6 +327,7 @@ fn serve_get_peer_files(buffer: &mut crate::http::StreamBuffer) -> Result<()> {
 	let mut fetch_pool = crate::ThreadPool::new();
 	for peer_addr in GLOBALS.read_peers().clone().into_iter() {
 		fetch_pool.spawn(move || {
+			println!("\rDBG: RUNNING IN THREAD");
 			let mut stream = std::net::TcpStream::connect((peer_addr, 8000))?;
 			stream.write(b"GET /files HTTP/1.1")?;
 
@@ -336,6 +337,8 @@ fn serve_get_peer_files(buffer: &mut crate::http::StreamBuffer) -> Result<()> {
 			#[allow(invalid_value)]
 			let mut buffer: [u8; 4096] = unsafe{ std::mem::MaybeUninit::uninit().assume_init() };
 			let buffer_filled = stream.read(&mut buffer)?;
+
+			println!("\rDBG: BUFFER FILLED -> {}", buffer_filled);
 
 			let (_head, body) = unsafe{ buffer[0..buffer_filled].as_ascii_unchecked() }
 				.as_str().split_once("\r\n")
