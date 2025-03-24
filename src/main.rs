@@ -1,5 +1,6 @@
 #![feature(ascii_char)]
 #![feature(generic_arg_infer)]
+#![feature(addr_parse_ascii)]
 
 // TODO remove file serving duplcates in Globals::add_file
 
@@ -24,6 +25,30 @@ use anyhow::Result;
 use routes::handle_client;
 
 
+// NOTE this could be done faster maybe with some SIMD or
+// clever optimizations
+pub fn split_slice_uninclusive<'a, T: PartialEq + std::fmt::Debug>(
+	source: &'a [T], subslice: &[T]
+) -> Option<(&'a [T], &'a [T])> {
+	if subslice.len() > source.len() { return None; }
+	if subslice.len() == source.len() {
+		if source == subslice { return Some((&[], &[])); }
+		else { return None; }
+	}
+
+	for index in 0..(source.len()-subslice.len()) {
+		assert_eq!(source[index..(index+subslice.len())].len(), subslice.len());
+		if &source[index..(index+subslice.len())] == subslice {
+			return Some((
+				&source[..index],
+				&source[index+subslice.len()..]
+			));
+		}
+	}
+
+
+	return None;
+}
 
 struct CommandTokenIter<'a> {
 	source: &'a str,
@@ -147,7 +172,7 @@ fn main() {
 					match routes::handle_client(stream) {
 						Ok(()) => {},
 						Err(e) => {
-							println!("\rError: failed to serve client -> {e}");
+							println!("\rError:  client handler returned an error -> {e}");
 						}
 					};
 					return Ok(());
@@ -242,7 +267,9 @@ fn main() {
 	\rCtrl-W                      - clear line
 	\rshow                        - show the currently hosted files and playlists
 	\radd <file_path>             - add a file to the host list
-	\radd_playlist <playlist_dir> - add playlist_dir to playlists\
+	\radd_playlist <playlist_dir> - add playlist_dir to playlists
+	\rdownload_playlist <name> <playlist url> [audio format]
+	\r                            - download a playlist with default audio format being flac\
 				");
 			},
 			Some("show") => {
@@ -475,6 +502,45 @@ mod tests {
 			{
 				assert_eq!(token, command_token_strings[command_iter][iter]);
 			}
+		}
+	}
+
+	#[test]
+	fn test_split_slice_uninclusive() {
+		let sources: &[&[u8]] = &[
+			b"first second third",
+			b"GET /files HTTP/1.1\r\nContent-Type: text/plain",
+			b"first second third",
+			b"This longer string",
+		];
+		let splitters: &[&[u8]] = &[
+			b" ",
+			b"\r\n",
+			b" second ",
+			b"first",
+		];
+		let results: &[Option<(&[u8], &[u8])>] = &[
+			Some(( b"first", b"second third" )),
+			Some(( b"GET /files HTTP/1.1", b"Content-Type: text/plain")),
+			Some(( b"first", b"third" )),
+			None
+		];
+
+		// assert_eq!(
+		// 	crate::split_slice_uninclusive(
+		// 		b"first second third",
+		// 		b" ",
+		// 	),
+		// 	Some((&b"first"[..], &b"second third"[..]))
+		// )
+		for index in 0..sources.len() {
+			assert_eq!(
+				crate::split_slice_uninclusive(
+					sources[index],
+					splitters[index],
+				),
+				results[index]
+			)
 		}
 	}
 }

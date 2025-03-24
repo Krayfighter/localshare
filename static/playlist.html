@@ -14,12 +14,9 @@ function Array_remove(array, index) {
 
 
 let playlist_songs = [ %playlist_songs% ];
-// cloning in JS sucks
 let playlist_songs_fresh;
 let playlist_songs_listened_to;
 reset_playlist();
-// let playlist_songs_fresh = playlist_songs.map((x) => x);
-// let playlist_songs_listened_to = [];
 
 
 function reset_playlist() {
@@ -81,9 +78,9 @@ function select_random_song_from_remaining_fresh() {
   <button onclick=select_random_song_from_remaining_fresh()>next random song</button>
   <button onclick=reset_playlist()>reset playlist</button>
   <div id="audio_container">
-    <audio id="audio_element" controls>
-      <source src="/playlist/songs?playlist=%playlist_name%&song_number=0">
-    </audio>
+    <!-- <audio id="audio_element" controls> -->
+      <!-- <source src="/playlist/songs?playlist=%playlist_name%&song_number=0"> -->
+    <!-- </audio> -->
   </div>
   <div style="float: left; width: 50%%;">
     <h3>Fresh</h3>

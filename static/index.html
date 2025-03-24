@@ -1,7 +1,40 @@
 <!DOCTYPE html>
 <html>
 <head></head>
-<body>
+<script>
+async function fetch_peer_hosted_files() {
+  try {
+    const response = await fetch("/peer_files");
+    if (!response.ok) {
+      console.error("Error: failed to fetch /peer_files -> " + String(response.status) + response.statusText);
+    }
+
+    const entries = await response.json();
+    <!-- const entries_stirng = response.body -->
+
+    console.log("DBG: received entries -> " + entries);
+
+    let element = document.getElementById("peer_hosted_files");
+
+    let dom_string = String();
+
+    entries.forEach((entry) => {
+      dom_string += "<a href=\"/file/" + entry[1]
+        + "?source=" + entry[0] + "\">"
+        + entry[1] + " (" + entry[0] + ")</a><br />";
+    })
+
+    element.innerHTML = dom_string;
+  }catch (error) {
+    console.error("Error: otherwise uncaught exception while fetching peer files -> " + error.message);
+  }
+}
+async function load_procedural_content() {
+  let fetcher = async () => fetch_peer_hosted_files();
+  fetcher();
+}
+</script>
+<body onload=load_procedural_content()>
   <h2>Home Page</h2>
   <div style="float: left; padding-right: 5%%;">
     Local Addr:<br />Peer Addr:
@@ -11,8 +44,9 @@
   %hosted_files%
   <h3>Hosted Playlists</h3>
   %hosted_playlists%
-  <ul>
-    %peer_hosted_files%
-  </ul>
+  <!-- <ul id="peer_hosted_files"> -->
+  <!-- </ul> -->
+  <h3>Peer Hosted Files</h3>
+  <div id=peer_hosted_files></div>
 </body>
 </html>

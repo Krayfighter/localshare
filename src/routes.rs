@@ -3,179 +3,222 @@ use std::{io::{Read, Write}, str::FromStr};
 
 use anyhow::Result;
 
-use crate::{globals::GLOBALS, http::{make_http_request, ClosureReader, HttpHeader, ReadInto}};
+use crate::{
+	globals::GLOBALS,
+	http::{
+		ClosureReader,
+		HttpHeader,
+		ReadInto,
+		ContentType,
+		TransferEncoding,
+		ContentDisposition,
+	}
+};
 
 
 
-fn return_routing_error(buffer: &mut crate::http::StreamBuffer, error_string: &str) {
-	buffer.push_http_response_primary_header("HTTP/1.1", 400, "Routing Error").unwrap();
+fn return_routing_error(sink: &mut dyn Write, error_string: &str) {
+	let response = crate::http::HttpResponse{
+		protocol_version: "HTTP/1.1",
+		status_code: 200,
+		status_text: "OK",
+		headers: vec!(),
+		body: b""
+	};
+	
+	let mut sources: &mut [&mut dyn ReadInto] = &mut [
+		&mut b"<h2>Routing Error</h2><p>".as_slice(),
+		&mut error_string.as_bytes(),
+		&mut b"</p>".as_slice()
+	];
+	let sources: &mut dyn ReadInto = &mut sources;
+	response.write_from_readinto(sources, sink)
+		.expect("Failed to write routeing error response to writer");
 
-	buffer.begin_http_body().unwrap();
-	write!(buffer, "<h2>Routing Error</h2><p>{}</p>", error_string).unwrap();
-	buffer.flush().unwrap();
+	sink.flush().unwrap();
 }
 
 fn serve_get_index(
 	client_local_addr: std::net::SocketAddr,
 	client_peer_addr: std::net::SocketAddr,
-	buffer: &mut crate::http::StreamBuffer
+	// buffer: &mut crate::http::StreamBuffer
+	sink: &mut dyn Write
 ) -> Result<()> {
 
-	// // TODO this is all very crazy and likely quite slow
-	// let mut peer_files: Vec<(std::net::IpAddr, Vec<Box<str>>)> = vec!();
-	// for addr in GLOBALS.read_peers().iter() {
-	// 	GLOBALS.push_thread(move || {
-	// 		let mut stream  = match std::net::TcpStream::connect((*addr, 8000)) {
-	// 			Ok(stream) => stream,
-	// 			Err(e) => {
-	// 				println!("\rError: failed to connect to peer -> {}", e);
-	// 				return Ok(())
-	// 			}
-	// 		};
-	// 		#[allow(invalid_value)]
-	// 		let mut output_buffer: [u8; 4096] = unsafe { std::mem::MaybeUninit::uninit().assume_init() };
+	let response = crate::http::HttpResponse {
+		protocol_version: "HTTP/1.1",
+		status_code: 200,
+		status_text: "OK",
+		headers: vec![
+			HttpHeader::ContentType(ContentType::text_html)
+		],
+		body: b"",
+	};
 
-	// 		let mut stream_output_buffer = crate::http::StreamBuffer::new(&mut output_buffer[0..], &mut stream);
-	// 		make_http_request(&mut stream_output_buffer, crate::http::HttpMethod::GET, "/files", &[])?;
+	let local_addr_string = format!("{:?}", client_local_addr);
+	let peer_addr_string = format!("{:?}", client_peer_addr);
 
-	// 		let mut input_buffer = String::new();
-	// 		stream.read_to_string(&mut input_buffer)?;
-
-	// 		if let Some((_head, body)) = input_buffer.as_str().split_once("\r\n\r\n") {
-	// 			let mut current_peer_files = vec!();
-	// 			for file in body.split('\n') {
-	// 				current_peer_files.push(Box::from(file));
-	// 			}
-	// 			peer_files.push((*addr, current_peer_files));
-	// 		} else {
-	// 			println!("\rError: unexpected response from peer");
-	// 			continue;
-	// 		}
-	// 	})
-	// }
-	
-	buffer.push_http_response_primary_header("HTTP/1.1", 200, "OK")?;
-	buffer.push_http_content_type(crate::http::ContentType::text_html)?;
-	buffer.write(b"\r\n")?;
-
-
-	let index_html_file = GLOBALS.get_static_file("index.html");
-	buffer.write_templated(
-		index_html_file.as_ref().unwrap(),
-		&["peer_addr", "local_addr", "hosted_files", "hosted_playlists"],
-		&mut [
-			&mut format!("{:?}", client_local_addr).as_bytes(),
-			&mut format!("{:?}", client_peer_addr).as_bytes(),
+	let index_html_file = GLOBALS.get_static_file("index.html")
+		.ok_or(anyhow!("Failed to fetch index.html from globals"))?;
+	let mut template = crate::http::BodyTemplate {
+		template: index_html_file.as_ref(),
+		keys: &[b"peer_addr", b"local_addr", b"hosted_files", b"hosted_playlists"],
+		values: &mut [
+			&mut local_addr_string.as_bytes(),
+			&mut peer_addr_string.as_bytes(),
 			&mut iterator_reader!(
 				filename, GLOBALS.read_file_entries().filenames.iter(),
 				[ b"<a href=\"/file/", filename.as_bytes(), b"\">", filename.as_bytes(), b"</a><br />" ]
 			),
-			// &mut iterator_reader!(
-			// 	peer_entry_tuple, peer_files.iter(),
-			// 	[ b"<li>peer |", peer_entry_tuple.0.to_string().as_bytes(), b"| has files" ]
-			// ),
 			&mut iterator_reader!(
 				playlist_name, GLOBALS.read_playlists().iter().map(|playlist| playlist.name.as_ref()),
 				[
 					b"<a href=\"/playlist?playlist=", playlist_name.as_bytes(),
-					b"&song_number=0\">", playlist_name.as_bytes(), b"</a><br />"
+					b"\">", playlist_name.as_bytes(), b"</a><br />"
 				]
 			),
-		]
-	)?;
+		],
+	};
+
+	response.write_from_readinto(&mut template, sink)?;
 	return Ok(());
 }
 
-fn return_not_found(buffer: &mut crate::http::StreamBuffer) -> Result<()> {
-	buffer.clear();
-	buffer.push_http_response_primary_header("HTTP/1.1", 404, "Not Found")?;
-	buffer.push_http_content_type(crate::http::ContentType::text_html)?;
+fn return_not_found(sink: &mut dyn Write) -> Result<()> {
+	let response = crate::http::HttpResponse {
+		protocol_version: "HTTP/1.1",
+		status_code: 404,
+		status_text: "Not Found",
+		headers: vec![
+			crate::http::HttpHeader::ContentType(crate::http::ContentType::text_html)
+		],
+		body: b"<body><h2>Route Undefined or Unavailable - 404</h2></body>",
+	};
 
 	
-	buffer.push_http_body(b"<body><h2>Route Undefined or Unavailable - 404</h2></body>")?;
+	response.write_to_sink(sink)?;
 
 	return Ok(());
 }
 
-fn serve_get_favicon(buffer: &mut crate::http::StreamBuffer) -> Result<()> {
-	buffer.push_http_response_primary_header("HTTP/1.1", 200, "OK")?;
-	buffer.push_http_content_type(crate::http::ContentType::image_x_icon)?;
-	buffer.push_http_transfer_encoding(crate::http::TransferEncoding::binary)?;
+fn serve_get_favicon(sink: &mut dyn Write) -> Result<()> {
+	let response = crate::http::HttpResponse {
+		protocol_version: "HTTP/1.1",
+		status_code: 200,
+		status_text: "OK",
+		headers: vec![
+			crate::http::HttpHeader::ContentType(crate::http::ContentType::image_x_icon),
+			crate::http::HttpHeader::TransferEncoding(crate::http::TransferEncoding::binary),
+			crate::http::HttpHeader::ContentLength(GLOBALS.favicon.len())
+		],
+		body: GLOBALS.favicon.as_ref(),
+	};
 
-	buffer.push_http_content_length(GLOBALS.favicon.len())?;
-	buffer.write(b"\r\n")?;
-	buffer.write(GLOBALS.favicon.as_ref())?;
+	response.write_to_sink(sink)?;
 
 	return Ok(());
 }
 
-fn serve_get_file(
-	buffer: &mut crate::http::StreamBuffer,
-	uri_path: &str,
-) -> Result<()> {
-	let filepath = &uri_path[6..];
+fn serve_get_file(sink: &mut dyn Write, request: &crate::http::HttpRequest) -> Result<()> {
+	// let filepath = &uri_path[6..];
+	let (_, filepath) = match request.route.split_once('/') {
+		Some(pair) => pair,
+		None => {
+			return_routing_error(sink, "no file path in route");
+			return Ok(());
+		}
+	};
 
-	let result = GLOBALS.get_file_entry_by_name(filepath);
-	if let Some(file) = result {
-		buffer.push_http_response_primary_header("HTTP/1.1", 200, "OK")?;
-		buffer.push_http_content_type(crate::http::ContentType::text_plain)?;
-		buffer.push_http_transfer_encoding(crate::http::TransferEncoding::binary)?;
-		buffer.push_http_content_length(file.len())?;
-		buffer.push_http_content_disposition(crate::http::ContentDisposition::Attachment(Some(
-			filepath.split('/').rev().next().unwrap_or(filepath)
-		)))?;
-		buffer.write(b"\"\r\n")?;
-		buffer.write(file.as_ref())?;
+	if request.query_params == "" {
+		let result = GLOBALS.get_file_entry_by_name(filepath);
+		if let Some(file) = result {
+			let response = crate::http::HttpResponse {
+				protocol_version: "HTTP/1.1",
+				status_code: 200,
+				status_text: "OK",
+				headers: vec![
+					HttpHeader::ContentType(crate::http::ContentType::text_plain),
+					HttpHeader::TransferEncoding(crate::http::TransferEncoding::binary),
+					HttpHeader::ContentLength(file.len()),
+					HttpHeader::ContentDisposition(ContentDisposition::Attachment(Some(
+						filepath.split('/').rev().next().unwrap_or(filepath)
+					)))
+				],
+				body: file.as_ref(),
+			};
+			response.write_to_sink(sink)?;
+		}else {
+			return return_not_found(sink);
+		}
 	}else {
-		return return_not_found(buffer);
+		if !request.query_params.starts_with("source=") {
+			return_routing_error(sink, "query parameter should be formatted as ?sourece=xxxxx");
+			return Ok(());
+		}
+		let (_key, value) = request.query_params.split_once("=").unwrap();
+		match std::net::IpAddr::parse_ascii(value.as_bytes()) {
+			Ok(addr) => {
+				let mut peer_stream = std::net::TcpStream::connect((addr, 8000))?;
+				peer_stream.set_nonblocking(false)?;
+				{
+					let mut request = request.clone();
+					request.query_params = "";
+					request.write_to_sink(&mut peer_stream)?;
+				}
+				let mut buffer = Vec::<u8>::new();
+				let response = crate::http::HttpResponse::read_blocking(&mut buffer, &mut peer_stream)?;
+				response.write_to_sink(sink)?;
+			},
+			Err(_e) => {
+				return_routing_error(sink, "failed to parse address from query parameter");
+				return Ok(());
+			}
+		}
 	}
 
 	return Ok(());
 }
 
-fn serve_get_files(buffer: &mut crate::http::StreamBuffer) -> Result<()> {
-	println!("\rINFO: SERVING FILES");
-	buffer.push_http_response_primary_header("HTTP/1.1", 200, "OK")?;
-	buffer.push_http_content_type(crate::http::ContentType::text_plain)?;
-	buffer.write(b"\r\n")?;
+fn serve_get_files(sink: &mut dyn Write) -> Result<()> {
+	let response = crate::http::HttpResponse {
+		protocol_version: "HTTP/1.1",
+		status_code: 200,
+		status_text: "OK",
+		headers: vec![
+			HttpHeader::ContentType(ContentType::text_plain)
+		],
+		body: b"",
+	};
 
-	for entry in GLOBALS.read_file_entries().filenames.clone() {
-		write!(buffer, "{}\n", entry)?;
-	}
-
-	buffer.flush()?;
-
-	println!("\rINFO: FINISHED SERVING FILES");
+	response.write_from_readinto(
+		&mut ClosureReader{ source: &|dest| {
+			let mut write_size = 0;
+			for filename in GLOBALS.read_file_entries().filenames.clone() {
+				write_size += dest.write(filename.as_bytes())?;
+				write_size += dest.write(b"\n")?;
+			}
+			return Ok(write_size);
+		}},
+		sink
+	)?;
 
 	return Ok(());
 }
 
-fn serve_playlist(buffer: &mut crate::http::StreamBuffer, playlist_query: &str) -> Result<()> {
-
-	let query_iter = playlist_query.split('&');
-
+fn serve_get_playlist(sink: &mut dyn Write, request: &crate::http::HttpRequest) -> Result<()> {
 	let mut playlist_name_param: Option<&str> = None;
-	let mut song_number_param: Option<&str> = None;
 
-	for query in query_iter {
+	for query in request.query_params.split('&') {
 		if query.starts_with("playlist=") {
 			if playlist_name_param.is_some() {
-				return_routing_error(buffer, &format!("duplicate query paramter: {}", query));
+				return_routing_error(sink, &format!("duplicate query paramter: {}", query));
 				return Ok(());
 			}else {
 				playlist_name_param = Some(&query[9..]);
 			}
 		}
-		else if query.starts_with("song_number=") {
-			if song_number_param.is_some() {
-				return_routing_error(buffer, &format!("duplicate query paramter: {}", query));
-				return Ok(());
-			}else {
-				song_number_param = Some(&query[12..]);
-			}
-		}
 		else {
-			return_routing_error(buffer, &format!("unrecognized query parameter: {}", query));
+			return_routing_error(sink, &format!("unrecognized query parameter: {}", query));
 			return Ok(());
 		}
 	}
@@ -188,17 +231,6 @@ fn serve_playlist(buffer: &mut crate::http::StreamBuffer, playlist_query: &str) 
 		}
 	};
 
-	let song_number = match song_number_param {
-		Some(number_string) => match number_string.parse::<u32>() {
-			Ok(number) => number,
-			Err(e) => {
-				return_routing_error(buffer, &format!("song_number parameter failed to parsde: {}", e));
-				return Ok(());
-			}
-		},
-		None => 0
-	};
-
 	if let Some((iter, _name)) = GLOBALS.read_playlists()
 		.iter()
 		.map(|playlist| playlist.name.clone())
@@ -209,44 +241,46 @@ fn serve_playlist(buffer: &mut crate::http::StreamBuffer, playlist_query: &str) 
 
 		let playlist = playlists.get(iter).unwrap();
 
-		buffer.push_http_response_primary_header("HTTP/1.1", 200, "OK")?;
-		buffer.push_http_content_type(crate::http::ContentType::text_html)?;
+		let response = crate::http::HttpResponse {
+			protocol_version: "HTTP/1.1",
+			status_code: 200,
+			status_text: "OK",
+			headers: vec![
+				HttpHeader::ContentType(ContentType::text_html)
+			],
+			body: b"",
+		};
 
-		
-		buffer.begin_http_body()?;
-
-		
-		buffer.write_templated(
-			GLOBALS.get_static_file("playlist.html").unwrap().as_ref(),
-			&["playlist_name", "playlist_songs"],
-			&mut [
+		let playlist_template = GLOBALS.get_static_file("playlist.html")
+				.ok_or(anyhow!("Failed to fetch playlist.html from globals"))?;
+		let mut template = crate::http::BodyTemplate {
+			template: playlist_template.as_ref(),
+			keys: &[b"playlist_name", b"playlist_songs"],
+			values: &mut [
 				&mut playlist_name.as_bytes(),
 				&mut iterator_reader!(
 					name, playlist.files.filenames.iter()
 						.map(|filename| filename.split('/').rev().next().unwrap_or(filename)),
 					[ b"\"", name.as_bytes(), b"\"," ]
 				)
-			]
-		)?;
+			],
+		};
+		response.write_from_readinto(&mut template, sink)?;
 	}else {
-		return_routing_error(buffer, &format!("Unable to fetch playlist {}", playlist_name));
+		return_routing_error(sink, &format!("Unable to fetch playlist {}", playlist_name));
 	}
 	
 	return Ok(());
 }
 
-fn serve_playlist_song(buffer: &mut crate::http::StreamBuffer, uri_query: &str) -> Result<()> {
-
-
-	let uri_query_iter = uri_query.split('&');
-
+fn serve_get_playlist_song(sink: &mut dyn Write, request: &crate::http::HttpRequest) -> Result<()> {
 	let mut playlist_name_param: Option<&str> = None;
 	let mut song_number_param: Option<&str> = None;
 
-	for query in uri_query_iter {
+	for query in request.query_params.split('&') {
 		if query.starts_with("playlist=") {
 			if playlist_name_param.is_some() {
-				return_routing_error(buffer, &format!("duplicate query paramter: {}", query));
+				return_routing_error(sink, &format!("duplicate query paramter: {}", query));
 				return Ok(());
 			}else {
 				playlist_name_param = Some(&query[9..]);
@@ -254,14 +288,14 @@ fn serve_playlist_song(buffer: &mut crate::http::StreamBuffer, uri_query: &str) 
 		}
 		else if query.starts_with("song_number=") {
 			if song_number_param.is_some() {
-				return_routing_error(buffer, &format!("duplicate query paramter: {}", query));
+				return_routing_error(sink, &format!("duplicate query paramter: {}", query));
 				return Ok(());
 			}else {
 				song_number_param = Some(&query[12..]);
 			}
 		}
 		else {
-			return_routing_error(buffer, &format!("unrecognized query parameter: {}", query));
+			return_routing_error(sink, &format!("unrecognized query parameter: {}", query));
 			return Ok(());
 		}
 	}
@@ -269,7 +303,7 @@ fn serve_playlist_song(buffer: &mut crate::http::StreamBuffer, uri_query: &str) 
 	let playlist_name = match playlist_name_param {
 		Some(name) => name,
 		None => {
-			return_routing_error(buffer, "unable to parse playlist name parameter");
+			return_routing_error(sink, "unable to parse playlist name parameter");
 			return Ok(());
 		}
 	};
@@ -278,7 +312,7 @@ fn serve_playlist_song(buffer: &mut crate::http::StreamBuffer, uri_query: &str) 
 		Some(number_string) => match number_string.parse::<u32>() {
 			Ok(number) => number,
 			Err(e) => {
-				return_routing_error(buffer, &format!("failed to parse song_number parameter: {}", e));
+				return_routing_error(sink, &format!("failed to parse song_number parameter: {}", e));
 				return Ok(());
 			}
 		},
@@ -286,101 +320,97 @@ fn serve_playlist_song(buffer: &mut crate::http::StreamBuffer, uri_query: &str) 
 	};
 
 
-	buffer.push_http_response_primary_header("HTTP/1.1", 200, "OK")?;
-	buffer.push_http_content_type(crate::http::ContentType::audio_flac)?;
-	buffer.push_http_transfer_encoding(crate::http::TransferEncoding::binary)?;
-	buffer.push_http_content_disposition(crate::http::ContentDisposition::Inline)?;
-
-
 	let songmap = match GLOBALS.get_song_by_playlist_and_index(playlist_name, song_number) {
 		Some(songmap) => songmap,
 		None => {
-			return_routing_error(buffer, &format!("Unable to find playlist name: {}", playlist_name));
+			return_routing_error(sink, &format!("Unable to find playlist name: {}", playlist_name));
 			return Ok(());
 		}
 	};
 
+	let response = crate::http::HttpResponse {
+		protocol_version: "HTTP/1.1",
+		status_code: 200,
+		status_text: "OK",
+		headers: vec![
+			HttpHeader::ContentType(ContentType::audio_flac),
+			HttpHeader::ContentDisposition(ContentDisposition::Inline),
+			HttpHeader::ContentLength(songmap.len()),
+			HttpHeader::TransferEncoding(TransferEncoding::binary),
+		],
+		body: songmap.as_ref(),
+	};
 
-	let file_slice: &[u8] = songmap.as_ref();
-
-	buffer.push_http_content_length(file_slice.len())?;
-
-	buffer.push_http_body(file_slice)?;
+	response.write_to_sink(sink)?;
 
 	return Ok(());
 }
 
-fn serve_get_peers(buffer: &mut crate::http::StreamBuffer) -> Result<()> {
-	buffer.push_http_response_primary_header("HTTP/1.1", 200, "OK")?;
-	buffer.push_http_content_type(crate::http::ContentType::text_plain)?;
-	buffer.write(b"\r\n")?;
+fn serve_get_peers(sink: &mut dyn Write) -> Result<()> {
+	let response = crate::http::HttpResponse {
+		protocol_version: "HTTP/1.1",
+		status_code: 200,
+		status_text: "OK",
+		headers: vec!(),
+		body: b"",
+	};
 
-	buffer.write_templated(
-		b"%peer_addrs%",
-		&["peer_addrs"],
-		&mut [
-			&mut iterator_reader!(addr, GLOBALS.read_peers().iter(), [
-				addr.to_string().as_bytes(), b"\n"
-			])
-		]
+	response.write_from_readinto(
+		&mut ClosureReader { source: &|dest| {
+			let mut write_size = 0;
+			let peers = GLOBALS.read_peers();
+			let peer_count = peers.len();
+
+			for (iter, peer) in peers.iter().enumerate() {
+				write_size += dest.write(peer.to_string().as_bytes())?;
+				if iter < peer_count {
+					write_size += dest.write(b"\n")?;
+				}
+			}
+
+			return Ok(write_size);
+		}},
+		sink
 	)?;
 
 	return Ok(());
 }
 
-fn serve_get_peer_files(buffer: &mut crate::http::StreamBuffer) -> Result<()> {
+fn serve_get_peer_files(sink: &mut dyn Write) -> Result<()> {
 	let mut fetch_pool = crate::ThreadPool::new();
 	for peer_addr in GLOBALS.read_peers().clone().into_iter() {
 		fetch_pool.spawn(move || {
-			println!("\rDBG: RUNNING IN THREAD");
 			let mut stream = std::net::TcpStream::connect((peer_addr, 8000))?;
-			stream.set_nonblocking(false)?;
-			stream.write(b"GET /files HTTP/1.1")?;
+			let request = crate::http::HttpRequest {
+				protocol_version: "HTTP/1.1",
+				method: crate::http::HttpMethod::GET,
+				route: "/files",
+				query_params: "",
+				headers: vec!(),
+				body: b"",
+			};
+			request.write_to_sink(&mut stream)?;
+			stream.flush()?;
 
 			// // NOTE this may fix a problem with incomplete reads if un-comented
 			// std::thread::sleep(std::time::Duration::from_millis(10));
 
-			#[allow(invalid_value)]
-			let mut buffer: [u8; 4096] = unsafe{ std::mem::MaybeUninit::uninit().assume_init() };
-			let mut buffer_filled = 0;
+			let mut buffer = Vec::with_capacity(16384);
+			let response = crate::http::HttpResponse::read_blocking(&mut buffer, &mut stream)?;
 
-			println!("\rJUST BEFORE READ");
-
-			// let buffer_filled = stream.read(&mut buffer)?;
-			// let mut filled = 0;
-			// while filled > 0 {
-			loop {
-				match stream.read(&mut buffer[buffer_filled..]) {
-					Ok(count) => {
-						if count == 0 && buffer_filled != 0 { break; }
-						buffer_filled += count;
-					},
-					Err(e) => {
-						// filled = 1;
-						println!("\rWARN: error reading from tcp socket -> {e}");
-						break;
-					}
-				}
-			}
-
-			println!("\rDBG: BUFFER FILLED -> {}", buffer_filled);
-
-			let (_head, body) = match unsafe{ buffer[0..buffer_filled].as_ascii_unchecked() }
-				.as_str().split_once("\r\n")
+			let (_head, body) = match unsafe{ buffer.as_slice().as_ascii_unchecked() }
+				.as_str().split_once("\r\n\r\n")
 			{
 				Some(pair) => pair,
 				None => {
 					println!(
 						"\rError: failed to split NOTE: buffer contents -> {}",
-						unsafe{ (&buffer[0..buffer_filled]).as_ascii_unchecked() }.as_str()
+						unsafe{ buffer.as_slice().as_ascii_unchecked() }.as_str()
 					);
 					panic!("Thread Cannot continue");
 				}
 			};
 
-			// for file in body.split("\n") {
-				
-			// }
 			let files = body.split("\n").map(|file| file.to_owned())
 				.collect::<Vec<String>>();
 
@@ -388,27 +418,72 @@ fn serve_get_peer_files(buffer: &mut crate::http::StreamBuffer) -> Result<()> {
 		});
 	}
 
-	buffer.push_http_response_primary_header("HTTP/1.1", 200, "OK")?;
-	buffer.push_http_content_type(crate::http::ContentType::text_html)?;
-	buffer.write(b"\r\n[")?;
-	buffer.flush()?;
+	let response = crate::http::HttpResponse {
+		protocol_version: "HTTP/1.1",
+		status_code: 200,
+		status_text: "OK",
+		headers: vec![
+			HttpHeader::ContentType(ContentType::application_json)
+		],
+		body: b"",
+	};
 
-	for peer_entry in fetch_pool.into_iter() {
-		match peer_entry {
-			Some(Ok((peer_addr, file_list))) => {
-				for file in file_list { write!(buffer, "[\"{}\", \"{}\"]", peer_addr, file)?; }
-				buffer.flush()?;
-			},
-			Some(Err(e)) => {
-				println!("\rError: failed to fetch files from peer -> {e}");
-			},
-			None => { std::thread::sleep(std::time::Duration::from_millis(10)); }
-		}
-	}
+	let responses = fetch_pool.into_iter()
+		.map(|peer_entry| {
+			match peer_entry {
+				Some(Ok(pair)) => { Some(pair) },
+				Some(Err(e)) => {
+					println!("\rError: failed to fetch files from peer -> {e}");
+					None
+				},
+				None => {
+					std::thread::sleep(std::time::Duration::from_millis(10));
+					None
+				}
+			}
+		})
+		.filter(|entry| entry.is_some())
+		.map(|entry| entry.unwrap())
+		.collect::<Vec<(std::net::IpAddr, Vec<String>)>>();
+
+	response.write_from_readinto(
+		&mut ClosureReader{ source: &mut move |dest| {
+			let mut write_size = 0;
+			write_size += dest.write(b"[")?;
+			for resp in responses.iter() {
+				let mut filename_iter = resp.1.iter();
+				// for filename in filename_iter {
+				let mut filename = filename_iter.next();
+				while filename.is_some() {
+					write_size += dest.write(b"[\"")?;
+					write_size += dest.write(resp.0.to_string().as_bytes())?;
+					write_size += dest.write(b"\",\"")?;
+					write_size += dest.write(filename.unwrap().as_bytes())?;
+					write_size += dest.write(b"\"]")?;
+					filename = filename_iter.next();
+					if filename.is_some() {
+						if filename.unwrap().as_str() == "" {
+							break;
+						}else {
+							write_size += dest.write(b",")?;
+						}
+					}
+				}
+			}
+			write_size += dest.write(b"]")?;
+
+			return Ok(write_size);
+		}},
+		sink
+	)?;
+
+	sink.flush()?;
 	
 	return Ok(());
 }
 
+
+// TODO update this function
 fn serve_post_peers(
 	headers: &[crate::http::HttpHeader],
 	body: &[u8],
@@ -428,139 +503,52 @@ fn serve_post_peers(
 }
 
 pub fn handle_client(mut client: std::net::TcpStream) -> Result<()> {
+	client.set_nonblocking(false)?;
 	let client_peer_addr = client.peer_addr()?;
 	let client_local_addr = client.local_addr()?;
 
-	let mut buffer: [u8; 4096] = unsafe{ std::mem::zeroed() };
-	let mut buffer_filled = 0;
-
-	// let bufreader = std::io::BufReader::with_capacity(4096, client);
-	// let mut buffer = String::with_capacity(4096);
-
-	// let mut read_size = client.read(&mut buffer[buffer_filled..])?;
-	let mut read_size = 1;
-	while read_size > 0 {
-		match client.read(&mut buffer[buffer_filled..]) {
-			Ok(count) => {
-				read_size = count;
-				buffer_filled += count;
-			},
-			Err(e) => {
-				println!("\rWARN: error reading from tcp socket -> {e}");
-				break;
-			}
-		}
-	}
-	// buffer_filled += client.read(&mut buffer)?;
-// let _ = client.read_to_string(&mut buffer)?;
-// let buf_cursor = std::io::BorrowedBuf::from(unsafe{ buffer.as_bytes_mut() });
-// let _ = client.read_buf(buf_cursor);
-	// let buffer_string = unsafe{ buffer.as_ascii_unchecked() }.as_str();
-
-	let (head, body) = match unsafe{ buffer.as_ascii_unchecked() }.as_str().split_once("\r\n\r\n") {
-		Some(split_tuple) => split_tuple,
-		None => {
-			std::thread::sleep(std::time::Duration::from_millis(20));
-			buffer_filled += client.read(&mut buffer[buffer_filled..])?;
-			let buffer_str = unsafe{ buffer.as_ascii_unchecked() }.as_str();
-			match buffer_str.split_once("\r\n\r\n") {
-				Some(split_tuple) => split_tuple,
-				None => {
-					println!("\rWARN: failed to read body separator for request even after waiting");
-					(buffer_str, "")
-				}
-			}
-		}
-	};
-		// .unwrap_or((&buffer_string, ""));
-	let body = body.as_bytes();
-
-	let mut header_iterator = head.split("\r\n");
-	let request_line = header_iterator.next()
-		.ok_or_else(|| { anyhow!("Invalid HTTP request structure") })?;
-	let mut request_line_iterator = request_line.split(" ");
-	let request_method_string = request_line_iterator.next()
-		.ok_or_else(|| { anyhow!("Invalid HTTP request structure") })?;
-
-	let mut headers = vec!();
-	let mut header = header_iterator.next();
-
-	// TODO parse Content-Length http header so that a body can be fully downloaded
-	// if it is a substantial size
-	loop {
-		if header.is_none() { break; }
-		if header.unwrap() == "" { break; }
-
-		if let Some((header_type, header_value)) = header.unwrap().split_once(": ") {
-			if let Some(header) = HttpHeader::from_str_pair(header_type, header_value) {
-				headers.push(header);
-			}else { println!("\rDBG: malformed or unhandled http header -> {}", header.unwrap()); }
-		}else { println!("\rDBG: received malformed http header -> {}", header.unwrap()); }
-
-		header = header_iterator.next();
-	}
-
-	let request_method: crate::http::HttpMethod;
-	let request_uri: &str;
-
-	if request_method_string == "GET" { request_method = crate::http::HttpMethod::GET; }
-	else if request_method_string == "POST" { request_method = crate::http::HttpMethod::POST; }
-	else { bail!("Unhandled HTTP request type"); }
-
-
-	request_uri = request_line_iterator.next()
-		.ok_or_else(|| { anyhow!("Invalid HTTP request structure") })?;
+// 	// TODO parse Content-Length http header so that a body can be fully downloaded
+	// client.set_nonblocking(true)?;
+	let mut request_buffer = Vec::<u8>::new();
+	let request = crate::http::HttpRequest::read_blocking(&mut request_buffer, &mut client)?;
 
 	println!(
-		"\rINFO: serving http request from {:?} for route {:?} {:?}",
-		client_peer_addr, request_method, request_uri
+		"\rINFO: serving request {} {} on version {}",
+		request.method.as_str(),
+		request.route,
+		request.protocol_version
 	);
 
-	let _http_version = request_line_iterator.next()
-		.ok_or_else(|| { anyhow!("Invalid HTTP request structure") })?;
+	let mut path_iter = request.route.split("/");
+	let _ = path_iter.next();
+	let path_base = path_iter.next()
+		.unwrap_or(request.route);
 
-	let mut iobuf: [u8; 4096] = unsafe{ std::mem::zeroed() };
-	let mut buffer = crate::http::StreamBuffer::new(&mut iobuf, &mut client);
+	let mut buffer_backing: [u8; 16384] = unsafe{ std::mem::zeroed() };
+	let mut buffer = crate::http::StreamBuffer::new(&mut buffer_backing, &mut client);
 
-
-	let mut uri_query_splitter = request_uri.split('?');
-
-	let uri_path = match uri_query_splitter.next() {
-		Some(path) => path,
-		None => request_uri
-	};
-	let uri_query = match uri_query_splitter.next() {
-		Some(query) => query,
-		None => ""
-	};
-
-
-	let mut uri_path_iter = uri_path.split('/');
-	let mut uri_path_base = uri_path_iter.next();
-	if let Some("") = uri_path_base { uri_path_base = uri_path_iter.next(); }
-
-	match request_method {
+	match request.method {
 		crate::http::HttpMethod::GET => {
-			match uri_path_base {
-				None | Some("") => serve_get_index(client_local_addr, client_peer_addr, &mut buffer)?,
-				Some("favicon.ico") => serve_get_favicon(&mut buffer)?,
-				Some("file") => serve_get_file(&mut buffer, uri_path)?,
-				Some("files") => serve_get_files(&mut buffer)?,
-				Some("playlist") => {
-					match uri_path_iter.next() {
-						Some("songs") => { serve_playlist_song(&mut buffer, uri_query)?; },
+			match path_base {
+				"/" | "" => serve_get_index(client_local_addr, client_peer_addr, &mut buffer)?,
+				"favicon.ico" => serve_get_favicon(&mut buffer)?,
+				"file" => serve_get_file(&mut buffer, &request)?,
+				"files" => serve_get_files(&mut buffer)?,
+				"playlist" => {
+					match path_iter.next() {
+						Some("songs") => { serve_get_playlist_song(&mut buffer, &request)?; },
 						Some(_) => { return_not_found(&mut buffer)?; },
-						None => { serve_playlist(&mut buffer, uri_query)?; }
+						None => { serve_get_playlist(&mut buffer, &request)?; }
 					}
 				},
-				Some("peers") => { serve_get_peers(&mut buffer)?; },
-				Some("peer_files") => { serve_get_peer_files(&mut buffer)?; }
+				"peers" => { serve_get_peers(&mut buffer)?; },
+				"peer_files" => { serve_get_peer_files(&mut buffer)?; }
 				_ => return_not_found(&mut buffer)?,
 			}
 		},
 		crate::http::HttpMethod::POST => {
-			match uri_path_base {
-				Some("peers") => { serve_post_peers(&headers, body)?; },
+			match path_base {
+				"peers" => { serve_post_peers(&request.headers, &request.body)?; },
 				_ => return_not_found(&mut buffer)?,
 			}
 		},
@@ -574,14 +562,3 @@ pub fn handle_client(mut client: std::net::TcpStream) -> Result<()> {
 	return Ok(());
 }
 
-#[cfg(test)]
-mod test_routes {
-	#[test]
-	fn test_get_index() {
-		let mut output_buffer = Vec::<u8>::new();
-		let mut back_buffer: [u8; 4096] = unsafe{ std::mem::zeroed() };
-		let mut stream_buffer = crate::http::StreamBuffer::new(&mut back_buffer, &mut output_buffer);
-
-		return
-	}
-}
