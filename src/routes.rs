@@ -170,8 +170,15 @@ fn serve_get_file(sink: &mut dyn Write, request: &crate::http::HttpRequest) -> R
 					std::thread::sleep(std::time::Duration::from_millis(100));
 				}
 				let mut buffer = Vec::<u8>::new();
-				let response = crate::http::HttpResponse::read_blocking(&mut buffer, &mut peer_stream)?;
-				response.write_to_sink(sink)?;
+				peer_stream.read(&mut buffer)?;
+				if buffer.len() == 0 {
+					println!("\rError: failed to read any bytes from peer");
+					return_routing_error(sink, "failed to read from peer");
+					return Ok(());
+				}
+				sink.write(buffer.as_slice())?;
+				// let response = crate::http::HttpResponse::read_blocking(&mut buffer, &mut peer_stream)?;
+				// response.write_to_sink(sink)?;
 			},
 			Err(_e) => {
 				return_routing_error(sink, "failed to parse address from query parameter");
