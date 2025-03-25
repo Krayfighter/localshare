@@ -419,6 +419,9 @@ impl HttpRequest<'_> {
 			}
 		}
 
+		println!("\rDBG: request buffer contents: {}", unsafe{ buffer.as_slice().as_ascii_unchecked() }.as_str());
+		if buffer.len() == 0 { bail!("0 bytes read from request source"); }
+
 		let (head, body) = match crate::split_slice_uninclusive(buffer.as_slice(), b"\r\n\r\n") { 
 			Some(pair) => pair,
 			None => {
@@ -551,6 +554,10 @@ impl HttpResponse<'_> {
 				}}
 			}
 		}
+
+		println!("\rDBG: no body -> buffer len = {}", buffer.len());
+		println!("\rDBG: body string -> {}", unsafe{ buffer.as_slice().as_ascii_unchecked() }.as_str() );
+		if buffer.len() == 0 { bail!("Failed to read any bytes from source, even in blocking mode"); }
 
 		let (head, body) = match crate::split_slice_uninclusive(buffer.as_slice(), b"\r\n\r\n") { 
 			Some(pair) => pair,

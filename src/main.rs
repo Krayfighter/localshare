@@ -300,6 +300,9 @@ fn main() {
 						for playlist in GLOBALS.read_playlists().iter() {
 							println!("\r-> playlist {}", playlist.name);
 						}
+						for peer in GLOBALS.read_peers().iter() {
+							println!("\r-> peer {:?}", peer);
+						}
 					}
 				}
 			},

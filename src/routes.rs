@@ -156,6 +156,7 @@ fn serve_get_file(sink: &mut dyn Write, request: &crate::http::HttpRequest) -> R
 			return Ok(());
 		}
 		let (_key, value) = request.query_params.split_once("=").unwrap();
+		println!("\rDBG: source param -> {}", value);
 		match std::net::IpAddr::parse_ascii(value.as_bytes()) {
 			Ok(addr) => {
 				let mut peer_stream = std::net::TcpStream::connect((addr, 8000))?;
@@ -164,6 +165,8 @@ fn serve_get_file(sink: &mut dyn Write, request: &crate::http::HttpRequest) -> R
 					let mut request = request.clone();
 					request.query_params = "";
 					request.write_to_sink(&mut peer_stream)?;
+					// wait for peer to respond
+					std::thread::sleep(std::time::Duration::from_millis(100));
 				}
 				let mut buffer = Vec::<u8>::new();
 				let response = crate::http::HttpResponse::read_blocking(&mut buffer, &mut peer_stream)?;
@@ -381,6 +384,8 @@ fn serve_get_peer_files(sink: &mut dyn Write) -> Result<()> {
 	for peer_addr in GLOBALS.read_peers().clone().into_iter() {
 		fetch_pool.spawn(move || {
 			let mut stream = std::net::TcpStream::connect((peer_addr, 8000))?;
+			stream.set_nonblocking(false)?;
+
 			let request = crate::http::HttpRequest {
 				protocol_version: "HTTP/1.1",
 				method: crate::http::HttpMethod::GET,
