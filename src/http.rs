@@ -53,7 +53,11 @@ impl<'a> HttpHeader<'a> {
 					return Ok(Some(HttpHeader::ContentLength(len)));
 				} else { bail!("invalid content length"); }
 			},
-			"Content-Disposition" => { todo!() },
+			"Content-Disposition" => {
+				if let Ok(disp) = ContentDisposition::from_str(value) {
+					return Ok(Some(HttpHeader::ContentDisposition(disp)));
+				}else { bail!("failed to parse Content-Disposition header"); }
+			},
 			// NOTE these are a list of recognized but unhandled http header keys
 			"Accept-Language" | "Range" | "DNT" | "Sec-GPC"
 				| "Connection" | "Referer" | "Sec-Fetch-Dest"
@@ -159,6 +163,22 @@ impl TransferEncoding {
 pub enum ContentDisposition<'a> {
 	Inline,
 	Attachment(Option<&'a str>)
+}
+
+impl<'a> ContentDisposition<'a> {
+	pub fn from_str(source: &'a str) -> Result<ContentDisposition<'a>> {
+		if source == "inline" { return Ok(ContentDisposition::Inline); }
+		else if source == "attachment" { return Ok(ContentDisposition::Attachment(None)); }
+		else if source.starts_with("attachment; ") {
+			let source = &source["attachment; ".len()..];
+			if let Some(seperator) = source.find("; ") {
+				return Ok(ContentDisposition::Attachment(Some(&source[..seperator])));
+			}else {
+				return Ok(ContentDisposition::Attachment(Some(&source[..])));
+			}
+		}
+		else { bail!("Failed to parse content disposition"); }
+	}
 }
 
 impl ReadInto for ContentDisposition<'_> {

@@ -121,13 +121,14 @@ fn serve_get_favicon(sink: &mut dyn Write) -> Result<()> {
 
 fn serve_get_file(sink: &mut dyn Write, request: &crate::http::HttpRequest) -> Result<()> {
 	// let filepath = &uri_path[6..];
-	let (_, filepath) = match request.route.split_once('/') {
-		Some(pair) => pair,
-		None => {
-			return_routing_error(sink, "no file path in route");
-			return Ok(());
-		}
-	};
+	// let (_, filepath) = match request.route.split_once('/') {
+	// 	Some(pair) => pair,
+	// 	None => {
+	// 		return_routing_error(sink, "no file path in route");
+	// 		return Ok(());
+	// 	}
+	// };
+	let filepath = &request.route["/file/".len()..];
 
 	if request.query_params == "" {
 		let result = GLOBALS.get_file_entry_by_name(filepath);
