@@ -30,8 +30,7 @@ async function fetch_peer_hosted_files() {
   }
 }
 async function load_procedural_content() {
-  let fetcher = async () => fetch_peer_hosted_files();
-  fetcher();
+  fetch_peer_hosted_files();
 }
 </script>
 <body onload=load_procedural_content()>

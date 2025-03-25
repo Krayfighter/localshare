@@ -41,11 +41,6 @@ function refresh_song_lists() {
 
 }
 
-function load_procedural_content() {
-  refresh_song_lists();
-  select_random_song_from_remaining_fresh();
-}
-
 function replace_audio_element(song_number) {
   let audio_container = document.getElementById("audio_container");
   audio_container.innerHTML =
@@ -69,6 +64,10 @@ function select_random_song_from_remaining_fresh() {
   refresh_song_lists();
 }
 
+function load_procedural_content() {
+  refresh_song_lists();
+  select_random_song_from_remaining_fresh();
+}
 </script>
 <body onload=load_procedural_content()>
   <h1>%playlist_name%</h1>
