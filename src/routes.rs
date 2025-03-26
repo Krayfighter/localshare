@@ -148,6 +148,7 @@ fn serve_get_file(sink: &mut dyn Write, request: &crate::http::HttpRequest) -> R
 				body: file.as_ref(),
 			};
 			response.write_to_sink(sink)?;
+			sink.flush()?;
 		}else {
 			return return_not_found(sink);
 		}
@@ -166,8 +167,9 @@ fn serve_get_file(sink: &mut dyn Write, request: &crate::http::HttpRequest) -> R
 					let mut request = request.clone();
 					request.query_params = "";
 					request.write_to_sink(&mut peer_stream)?;
+					peer_stream.flush()?;
 					// wait for peer to respond
-					std::thread::sleep(std::time::Duration::from_millis(100));
+					std::thread::sleep(std::time::Duration::from_millis(1000));
 				}
 				let mut buffer = Vec::<u8>::new();
 				peer_stream.read(&mut buffer)?;

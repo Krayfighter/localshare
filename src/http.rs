@@ -439,8 +439,8 @@ impl HttpRequest<'_> {
 			}
 		}
 
-		println!("\rDBG: request buffer contents: {}", unsafe{ buffer.as_slice().as_ascii_unchecked() }.as_str());
 		if buffer.len() == 0 { bail!("0 bytes read from request source"); }
+		else if buffer.len() < 4 { bail!("read size of invalid size {}", buffer.len()); }
 
 		let (head, body) = match crate::split_slice_uninclusive(buffer.as_slice(), b"\r\n\r\n") { 
 			Some(pair) => pair,
